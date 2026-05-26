@@ -64,6 +64,29 @@
 
 #define PAD_BUFFER_SIZE 34
 
+#define FILE_MODE_READ 1
+#define FILE_MODE_WRITE 2
+#define FILE_MODE_CREATE 0x0200
+
+#define SAVE_FILE_PATH "bu00:BASLUS-00000MINE"
+#define SAVE_BLOCK_SIZE 8192
+#define SAVE_BLOCK_COUNT 1
+#define SAVE_DATA_OFFSET 128
+#define SAVE_MAGIC 0x31434d50
+#define SAVE_VERSION 1
+
+#define MENU_OPTION_NEW_GAME 0
+#define MENU_OPTION_LOAD_GAME 1
+#define MENU_OPTION_COUNT 2
+
+#define PAUSE_OPTION_RESUME 0
+#define PAUSE_OPTION_TOGGLE_FLY 1
+#define PAUSE_OPTION_TOGGLE_HUD 2
+#define PAUSE_OPTION_SAVE_GAME 3
+#define PAUSE_OPTION_LOAD_GAME 4
+#define PAUSE_OPTION_RETURN_MENU 5
+#define PAUSE_OPTION_COUNT 6
+
 typedef struct {
     DISPENV disp_env;
     DRAWENV draw_env;
@@ -114,6 +137,29 @@ typedef struct {
     int place_z;
 } RaycastHit;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+
+    int camera_pos_x;
+    int camera_pos_y;
+    int camera_pos_z;
+    int camera_yaw;
+    int camera_pitch;
+    int fly_mode_enabled;
+
+    int block_edit_count;
+    BlockEdit block_edits[MAX_BLOCK_EDITS];
+
+    uint32_t checksum;
+} SaveData;
+
+enum {
+    APP_STATE_MENU = 0,
+    APP_STATE_PLAY = 1,
+    APP_STATE_PAUSE = 2
+};
+
 enum {
     BLOCK_AIR = 0,
     BLOCK_DIRT = 1,
@@ -163,6 +209,26 @@ static int camera_pitch = DEFAULT_CAMERA_PITCH;
  * 1 = free fly/debug camera
  */
 static int fly_mode_enabled = 0;
+
+static int app_state = APP_STATE_MENU;
+static int menu_selected_option = MENU_OPTION_NEW_GAME;
+static int pause_selected_option = PAUSE_OPTION_RESUME;
+static int hud_visible = 1;
+
+static uint16_t pad_previous_buttons = 0;
+
+static const char *system_status_text = "";
+static int system_status_timer = 0;
+
+static uint8_t save_buffer[SAVE_BLOCK_SIZE];
+
+/* SaveData must fit after memory card header inside 1 block. */
+
+
+static void snap_camera_to_ground(void);
+static int save_game_to_memory_card(void);
+static int load_game_from_memory_card(void);
+static void reset_world_edits(void);
 
 /*
  * 64-step sine table.
@@ -441,6 +507,51 @@ static void draw_line(
     setXY2(line, x0, y0, x1, y1);
 }
 
+static void draw_filled_rect(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    int h,
+    int z,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    TILE *tile = (TILE *)new_primitive(context, z, sizeof(TILE));
+
+    setTile(tile);
+    setRGB0(tile, r, g, b);
+    setXY0(tile, x, y);
+    setWH(tile, w, h);
+}
+
+static void draw_panel(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    int h,
+    int z,
+    uint8_t fill_r,
+    uint8_t fill_g,
+    uint8_t fill_b,
+    uint8_t border_r,
+    uint8_t border_g,
+    uint8_t border_b
+) {
+    draw_filled_rect(context, x + 3, y + 3, w, h, z + 2, 20, 20, 24);
+    draw_filled_rect(context, x, y, w, h, z + 1, fill_r, fill_g, fill_b);
+
+    draw_line(context, x, y, x + w - 1, y, z, border_r, border_g, border_b);
+    draw_line(context, x, y, x, y + h - 1, z, border_r, border_g, border_b);
+    draw_line(context, x + w - 1, y, x + w - 1, y + h - 1, z, 28, 28, 32);
+    draw_line(context, x, y + h - 1, x + w - 1, y + h - 1, z, 28, 28, 32);
+
+    draw_line(context, x + 1, y + 1, x + w - 2, y + 1, z, 210, 210, 210);
+    draw_line(context, x + 1, y + 1, x + 1, y + h - 2, z, 210, 210, 210);
+}
+
 static void draw_crosshair(RenderContext *context) {
     const int cx = SCREEN_W / 2;
     const int cy = SCREEN_H / 2;
@@ -450,6 +561,286 @@ static void draw_crosshair(RenderContext *context) {
     draw_line(context, cx, cy - 5, cx, cy - 2, 0, 235, 235, 235);
     draw_line(context, cx, cy + 2, cx, cy + 5, 0, 235, 235, 235);
 }
+
+static void clear_bytes(uint8_t *data, int size) {
+    for (int i = 0; i < size; i++) {
+        data[i] = 0;
+    }
+}
+
+static void copy_bytes(uint8_t *dst, const uint8_t *src, int size) {
+    for (int i = 0; i < size; i++) {
+        dst[i] = src[i];
+    }
+}
+
+static uint32_t checksum_bytes(const uint8_t *data, int size) {
+    uint32_t hash = 2166136261u;
+
+    for (int i = 0; i < size; i++) {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+
+    return hash;
+}
+
+static void set_system_status(const char *text, int frames) {
+    system_status_text = text;
+    system_status_timer = frames;
+}
+
+static void tick_system_status(void) {
+    if (system_status_timer > 0) {
+        system_status_timer--;
+    }
+}
+
+static void init_memory_card(void) {
+    /*
+     * BIOS memory card driver init.
+     *
+     * The save path uses Memory Card slot 1:
+     *     bu00:BASLUS-00000MINE
+     */
+    InitCARD(1);
+    StartCARD();
+    _bu_init();
+}
+
+static void reset_world_edits(void) {
+    block_edit_count = 0;
+    mesh_center_tile_x = 999999;
+    mesh_center_tile_z = 999999;
+    mesh_dirty = 1;
+}
+
+static void write_save_icon_header(uint8_t *buffer) {
+    /*
+     * Minimal PS1 memory card header.
+     *
+     * The actual game data starts at SAVE_DATA_OFFSET. The header is mostly
+     * for making the file look sane in the memory card manager. The save/load
+     * code below only depends on our SaveData payload.
+     */
+    buffer[0] = 'S';
+    buffer[1] = 'C';
+    buffer[2] = 0x11;
+    buffer[3] = 0x00;
+
+    {
+        const char title[] = "MINECRAFT PS1 SAVE";
+
+        for (int i = 0; title[i] != 0 && i < 32; i++) {
+            buffer[4 + i] = (uint8_t)title[i];
+        }
+    }
+}
+
+static void fill_save_data(SaveData *save) {
+    save->magic = SAVE_MAGIC;
+    save->version = SAVE_VERSION;
+
+    save->camera_pos_x = camera_pos_x;
+    save->camera_pos_y = camera_pos_y;
+    save->camera_pos_z = camera_pos_z;
+    save->camera_yaw = camera_yaw;
+    save->camera_pitch = camera_pitch;
+    save->fly_mode_enabled = fly_mode_enabled;
+
+    save->block_edit_count = block_edit_count;
+
+    for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
+        if (i < block_edit_count) {
+            save->block_edits[i] = block_edits[i];
+        } else {
+            save->block_edits[i].x = 0;
+            save->block_edits[i].y = 0;
+            save->block_edits[i].z = 0;
+            save->block_edits[i].type = BLOCK_AIR;
+        }
+    }
+
+    save->checksum = 0;
+    save->checksum = checksum_bytes(
+        (const uint8_t *)save,
+        (int)sizeof(SaveData) - (int)sizeof(uint32_t)
+    );
+}
+
+static int validate_save_data(const SaveData *save) {
+    uint32_t expected_checksum;
+
+    if (save->magic != SAVE_MAGIC) {
+        return 0;
+    }
+
+    if (save->version != SAVE_VERSION) {
+        return 0;
+    }
+
+    if (save->block_edit_count < 0 || save->block_edit_count > MAX_BLOCK_EDITS) {
+        return 0;
+    }
+
+    expected_checksum = checksum_bytes(
+        (const uint8_t *)save,
+        (int)sizeof(SaveData) - (int)sizeof(uint32_t)
+    );
+
+    return expected_checksum == save->checksum;
+}
+
+static void apply_save_data(const SaveData *save) {
+    camera_pos_x = save->camera_pos_x;
+    camera_pos_y = save->camera_pos_y;
+    camera_pos_z = save->camera_pos_z;
+    camera_yaw = save->camera_yaw & ANGLE_MASK;
+    camera_pitch = clamp_int(
+        save->camera_pitch,
+        CAMERA_PITCH_MIN,
+        CAMERA_PITCH_MAX
+    );
+    fly_mode_enabled = save->fly_mode_enabled ? 1 : 0;
+
+    block_edit_count = save->block_edit_count;
+
+    for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
+        if (i < block_edit_count) {
+            block_edits[i] = save->block_edits[i];
+
+            if (block_edits[i].y < 0) {
+                block_edits[i].y = 0;
+            }
+
+            if (block_edits[i].y >= WORLD_HEIGHT) {
+                block_edits[i].y = WORLD_HEIGHT - 1;
+            }
+
+            if (
+                block_edits[i].type != BLOCK_AIR &&
+                block_edits[i].type != BLOCK_DIRT &&
+                block_edits[i].type != BLOCK_GRASS
+            ) {
+                block_edits[i].type = BLOCK_DIRT;
+            }
+        } else {
+            block_edits[i].x = 0;
+            block_edits[i].y = 0;
+            block_edits[i].z = 0;
+            block_edits[i].type = BLOCK_AIR;
+        }
+    }
+
+    mesh_center_tile_x = 999999;
+    mesh_center_tile_z = 999999;
+    mesh_dirty = 1;
+
+    if (!fly_mode_enabled) {
+        snap_camera_to_ground();
+    }
+}
+
+static int create_save_file_on_memory_card(void) {
+    int fd;
+
+    /*
+     * Important PS1 memory card rule:
+     *
+     * Creation is a separate operation. The file size is passed in memory-card
+     * blocks through the upper 16 bits of the open() mode.
+     *
+     * Example from old Psy-Q docs:
+     *     open("bu00:L01", O_CREAT | (2 << 16))
+     *
+     * After creation, close the file and reopen it for writing.
+     */
+    fd = open(
+        SAVE_FILE_PATH,
+        FILE_MODE_CREATE | (SAVE_BLOCK_COUNT << 16)
+    );
+
+    if (fd < 0) {
+        return 0;
+    }
+
+    close(fd);
+    return 1;
+}
+
+static int save_game_to_memory_card(void) {
+    SaveData save;
+    int fd;
+    int written;
+
+    clear_bytes(save_buffer, SAVE_BLOCK_SIZE);
+    write_save_icon_header(save_buffer);
+
+    fill_save_data(&save);
+
+    copy_bytes(
+        &(save_buffer[SAVE_DATA_OFFSET]),
+        (const uint8_t *)&save,
+        (int)sizeof(SaveData)
+    );
+
+    /*
+     * Simple one-slot save.
+     * Delete old save first, then create a fresh 1-block memory card file.
+     */
+    erase(SAVE_FILE_PATH);
+
+    if (!create_save_file_on_memory_card()) {
+        return 0;
+    }
+
+    fd = open(SAVE_FILE_PATH, FILE_MODE_WRITE);
+
+    if (fd < 0) {
+        return 0;
+    }
+
+    written = write(fd, save_buffer, SAVE_BLOCK_SIZE);
+    close(fd);
+
+    return written == SAVE_BLOCK_SIZE;
+}
+
+static int load_game_from_memory_card(void) {
+    SaveData save;
+    int fd;
+    int bytes_read;
+
+    clear_bytes(save_buffer, SAVE_BLOCK_SIZE);
+
+    fd = open(SAVE_FILE_PATH, FILE_MODE_READ);
+
+    if (fd < 0) {
+        return 0;
+    }
+
+    bytes_read = read(fd, save_buffer, SAVE_BLOCK_SIZE);
+    close(fd);
+
+    if (bytes_read < (SAVE_DATA_OFFSET + (int)sizeof(SaveData))) {
+        return 0;
+    }
+
+    copy_bytes(
+        (uint8_t *)&save,
+        &(save_buffer[SAVE_DATA_OFFSET]),
+        (int)sizeof(SaveData)
+    );
+
+    if (!validate_save_data(&save)) {
+        return 0;
+    }
+
+    apply_save_data(&save);
+
+    return 1;
+}
+
 
 static void init_input(void) {
     InitPAD(
@@ -820,10 +1211,8 @@ static void add_target_block(void) {
 }
 
 static void update_input(void) {
-    static uint16_t previous_buttons = 0;
-
     const uint16_t buttons = read_pad_buttons();
-    const uint16_t pressed_this_frame = buttons & ~previous_buttons;
+    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
     const int forward_x = isin(camera_yaw);
     const int forward_z = icos(camera_yaw);
@@ -831,15 +1220,18 @@ static void update_input(void) {
     const int right_x = icos(camera_yaw);
     const int right_z = -isin(camera_yaw);
 
-    if (pressed_this_frame & PAD_SELECT) {
-        reset_camera();
+    if (pressed_this_frame & PAD_START) {
+        app_state = APP_STATE_PAUSE;
+        pause_selected_option = PAUSE_OPTION_RESUME;
+        pad_previous_buttons = buttons;
+        return;
     }
 
-    if (pressed_this_frame & PAD_START) {
-        fly_mode_enabled = !fly_mode_enabled;
-
-        if (!fly_mode_enabled) {
-            snap_camera_to_ground();
+    if (pressed_this_frame & PAD_SELECT) {
+        if (save_game_to_memory_card()) {
+            set_system_status("SAVE OK", 90);
+        } else {
+            set_system_status("SAVE FAILED", 120);
         }
     }
 
@@ -933,7 +1325,7 @@ static void update_input(void) {
         snap_camera_to_ground();
     }
 
-    previous_buttons = buttons;
+    pad_previous_buttons = buttons;
 }
 
 static void clear_vertex_lookup(void) {
@@ -1653,6 +2045,496 @@ static void draw_mesh(RenderContext *context) {
     }
 }
 
+static void draw_texture_speckles(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    int h,
+    int z,
+    int seed,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    for (int i = 0; i < 5; i++) {
+        const int px = x + 2 + ((seed * 11 + i * 17) % (w - 4));
+        const int py = y + 2 + ((seed * 7 + i * 13) % (h - 4));
+        const int size = 2 + ((seed + i) & 1);
+
+        draw_filled_rect(context, px, py, size, size, z, r, g, b);
+    }
+}
+
+static void draw_minecraft_texture_block(
+    RenderContext *context,
+    int x,
+    int y,
+    int size,
+    int type,
+    int z,
+    int seed
+) {
+    const int band = size / 4;
+
+    switch (type) {
+        case 0:
+            draw_filled_rect(context, x, y, size, size, z + 1, 115, 72, 38);
+            draw_filled_rect(context, x, y, size, band, z, 80, 175, 64);
+            draw_filled_rect(context, x, y + band, size, 2, z, 70, 135, 48);
+            draw_texture_speckles(context, x, y + band + 1, size, size - band - 1, z, seed, 82, 50, 28);
+            draw_texture_speckles(context, x, y, size, band + 2, z, seed + 9, 118, 210, 82);
+            break;
+
+        case 1:
+            draw_filled_rect(context, x, y, size, size, z + 1, 116, 72, 38);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 82, 50, 28);
+            draw_texture_speckles(context, x, y, size, size, z, seed + 3, 145, 92, 48);
+            break;
+
+        case 2:
+            draw_filled_rect(context, x, y, size, size, z + 1, 104, 106, 104);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 72, 74, 74);
+            draw_texture_speckles(context, x, y, size, size, z, seed + 5, 138, 140, 138);
+            break;
+
+        case 3:
+            draw_filled_rect(context, x, y, size, size, z + 1, 48, 126, 44);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 32, 92, 34);
+            draw_texture_speckles(context, x, y, size, size, z, seed + 8, 82, 166, 64);
+            break;
+
+        case 4:
+            draw_filled_rect(context, x, y, size, size, z + 1, 100, 68, 36);
+            draw_filled_rect(context, x + 3, y, 3, size, z, 70, 44, 24);
+            draw_filled_rect(context, x + size - 5, y, 2, size, z, 130, 88, 48);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 74, 46, 24);
+            break;
+
+        case 5:
+            draw_filled_rect(context, x, y, size, size, z + 1, 42, 112, 190);
+            draw_filled_rect(context, x, y + 3, size, 2, z, 70, 152, 220);
+            draw_filled_rect(context, x, y + 9, size, 2, z, 34, 88, 160);
+            break;
+
+        case 6:
+        default:
+            draw_filled_rect(context, x, y, size, size, z + 1, 202, 184, 106);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 164, 142, 78);
+            draw_texture_speckles(context, x, y, size, size, z, seed + 4, 232, 216, 136);
+            break;
+    }
+
+    draw_line(context, x, y, x + size - 1, y, z, 230, 230, 230);
+    draw_line(context, x, y, x, y + size - 1, z, 218, 218, 218);
+    draw_line(context, x + size - 1, y, x + size - 1, y + size - 1, z, 34, 34, 34);
+    draw_line(context, x, y + size - 1, x + size - 1, y + size - 1, z, 34, 34, 34);
+}
+
+static void draw_menu_cloud(RenderContext *context, int x, int y, int z) {
+    draw_filled_rect(context, x, y + 8, 54, 10, z, 244, 248, 255);
+    draw_filled_rect(context, x + 12, y, 18, 20, z, 244, 248, 255);
+    draw_filled_rect(context, x + 28, y + 4, 24, 16, z, 244, 248, 255);
+    draw_filled_rect(context, x + 50, y + 10, 18, 8, z, 244, 248, 255);
+}
+
+static void draw_menu_tree(RenderContext *context, int x, int y, int block, int z) {
+    draw_minecraft_texture_block(context, x + block, y + block, block, 4, z, x + y + 1);
+    draw_minecraft_texture_block(context, x + block, y + block * 2, block, 4, z, x + y + 2);
+
+    draw_minecraft_texture_block(context, x, y, block, 3, z, x + y + 3);
+    draw_minecraft_texture_block(context, x + block, y, block, 3, z, x + y + 4);
+    draw_minecraft_texture_block(context, x + block * 2, y, block, 3, z, x + y + 5);
+    draw_minecraft_texture_block(context, x, y + block, block, 3, z, x + y + 6);
+    draw_minecraft_texture_block(context, x + block, y + block, block, 3, z, x + y + 7);
+    draw_minecraft_texture_block(context, x + block * 2, y + block, block, 3, z, x + y + 8);
+}
+
+static void draw_minecraft_button(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    int h,
+    int selected
+) {
+    if (selected) {
+        draw_filled_rect(context, x + 2, y + 2, w, h, 4, 18, 18, 18);
+        draw_filled_rect(context, x, y, w, h, 3, 160, 164, 160);
+        draw_line(context, x, y, x + w - 1, y, 2, 252, 252, 252);
+        draw_line(context, x, y, x, y + h - 1, 2, 252, 252, 252);
+        draw_line(context, x + w - 1, y, x + w - 1, y + h - 1, 2, 64, 64, 64);
+        draw_line(context, x, y + h - 1, x + w - 1, y + h - 1, 2, 64, 64, 64);
+        draw_filled_rect(context, x + 4, y + 4, w - 8, h - 8, 2, 126, 132, 126);
+    } else {
+        draw_filled_rect(context, x + 2, y + 2, w, h, 4, 14, 14, 14);
+        draw_filled_rect(context, x, y, w, h, 3, 106, 108, 106);
+        draw_line(context, x, y, x + w - 1, y, 2, 206, 206, 206);
+        draw_line(context, x, y, x, y + h - 1, 2, 206, 206, 206);
+        draw_line(context, x + w - 1, y, x + w - 1, y + h - 1, 2, 42, 42, 42);
+        draw_line(context, x, y + h - 1, x + w - 1, y + h - 1, 2, 42, 42, 42);
+        draw_filled_rect(context, x + 4, y + 4, w - 8, h - 8, 2, 86, 88, 86);
+    }
+}
+
+static void draw_menu_background(RenderContext *context) {
+    const int block = 16;
+
+    draw_filled_rect(context, 0, 0, SCREEN_W, 58, 9, 86, 152, 224);
+    draw_filled_rect(context, 0, 58, SCREEN_W, 46, 9, 108, 176, 236);
+    draw_filled_rect(context, 0, 104, SCREEN_W, 32, 9, 130, 194, 242);
+
+    draw_filled_rect(context, 248, 18, 32, 32, 8, 248, 226, 112);
+    draw_filled_rect(context, 252, 22, 24, 24, 7, 255, 242, 160);
+
+    draw_menu_cloud(context, 18, 52, 7);
+    draw_menu_cloud(context, 202, 62, 7);
+
+    for (int col = 0; col < 20; col++) {
+        const int x = col * block;
+        int top = 132;
+
+        if (col == 3 || col == 4 || col == 5) {
+            top = 116;
+        } else if (col == 6 || col == 7 || col == 8 || col == 9) {
+            top = 124;
+        } else if (col == 14 || col == 15 || col == 16) {
+            top = 148;
+        } else if (col >= 17) {
+            top = 140;
+        }
+
+        if (col >= 11 && col <= 13) {
+            draw_minecraft_texture_block(context, x, 148, block, 6, 6, col + 1);
+            draw_minecraft_texture_block(context, x, 164, block, 5, 6, col + 2);
+            draw_minecraft_texture_block(context, x, 180, block, 5, 6, col + 3);
+            draw_minecraft_texture_block(context, x, 196, block, 1, 6, col + 4);
+            draw_minecraft_texture_block(context, x, 212, block, 1, 6, col + 5);
+            continue;
+        }
+
+        draw_minecraft_texture_block(context, x, top, block, 0, 6, col + 3);
+
+        for (int y = top + block; y < SCREEN_H; y += block) {
+            if (y >= top + block * 3 && (col == 1 || col == 2 || col == 18)) {
+                draw_minecraft_texture_block(context, x, y, block, 2, 6, col + y);
+            } else {
+                draw_minecraft_texture_block(context, x, y, block, 1, 6, col + y);
+            }
+        }
+    }
+
+    draw_menu_tree(context, 38, 84, block, 5);
+    draw_menu_tree(context, 226, 100, block, 5);
+
+    draw_minecraft_texture_block(context, 152, 112, block, 2, 5, 31);
+    draw_minecraft_texture_block(context, 168, 112, block, 2, 5, 32);
+    draw_minecraft_texture_block(context, 152, 128, block, 2, 5, 33);
+    draw_minecraft_texture_block(context, 168, 128, block, 2, 5, 34);
+}
+static void draw_menu_option(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    const char *label,
+    int selected
+) {
+    draw_minecraft_button(context, x, y, w, 24, selected);
+
+    if (selected) {
+        draw_text(context, x + 18, y + 7, 0, "> ");
+        draw_text(context, x + 36, y + 7, 0, label);
+    } else {
+        draw_text(context, x + 36, y + 7, 0, label);
+    }
+}
+static void draw_pause_option(
+    RenderContext *context,
+    int x,
+    int y,
+    int w,
+    const char *label,
+    int selected
+) {
+    draw_minecraft_button(context, x, y, w, 19, selected);
+
+    if (selected) {
+        draw_text(context, x + 14, y + 5, 0, "> ");
+        draw_text(context, x + 30, y + 5, 0, label);
+    } else {
+        draw_text(context, x + 30, y + 5, 0, label);
+    }
+}
+static void draw_game_hud(RenderContext *context) {
+    if (!hud_visible) {
+        if (system_status_timer > 0) {
+            draw_minecraft_button(context, 8, 8, 104, 18, 0);
+            draw_text(context, 18, 12, 0, system_status_text);
+        }
+
+        return;
+    }
+
+    draw_panel(context, 6, 8, 142, 64, 2, 32, 36, 42, 174, 174, 174);
+    draw_text(context, 16, 18, 0, "MINECRAFT PS1");
+    draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
+    draw_text(context, 16, 50, 0, "START MENU  SELECT SAVE");
+
+    if (system_status_timer > 0) {
+        draw_minecraft_button(context, 8, 80, 112, 18, 0);
+        draw_text(context, 18, 84, 0, system_status_text);
+    }
+}
+static void start_new_game(void) {
+    reset_world_edits();
+    reset_camera();
+    pause_selected_option = PAUSE_OPTION_RESUME;
+
+    app_state = APP_STATE_PLAY;
+    set_system_status("NEW GAME", 90);
+}
+
+static void start_loaded_game(void) {
+    if (load_game_from_memory_card()) {
+        pause_selected_option = PAUSE_OPTION_RESUME;
+        app_state = APP_STATE_PLAY;
+        set_system_status("LOAD OK", 90);
+    } else {
+        app_state = APP_STATE_MENU;
+        set_system_status("LOAD FAILED", 120);
+    }
+}
+
+static void update_menu_input(void) {
+    const uint16_t buttons = read_pad_buttons();
+    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+
+    if (pressed_this_frame & PAD_UP) {
+        menu_selected_option--;
+
+        if (menu_selected_option < 0) {
+            menu_selected_option = MENU_OPTION_COUNT - 1;
+        }
+    }
+
+    if (pressed_this_frame & PAD_DOWN) {
+        menu_selected_option++;
+
+        if (menu_selected_option >= MENU_OPTION_COUNT) {
+            menu_selected_option = 0;
+        }
+    }
+
+    if (pressed_this_frame & PAD_LEFT) {
+        menu_selected_option = MENU_OPTION_NEW_GAME;
+    }
+
+    if (pressed_this_frame & PAD_RIGHT) {
+        menu_selected_option = MENU_OPTION_LOAD_GAME;
+    }
+
+    if (
+        (pressed_this_frame & PAD_CROSS) ||
+        (pressed_this_frame & PAD_CIRCLE) ||
+        (pressed_this_frame & PAD_START)
+    ) {
+        if (menu_selected_option == MENU_OPTION_NEW_GAME) {
+            start_new_game();
+        } else {
+            start_loaded_game();
+        }
+    }
+
+    pad_previous_buttons = buttons;
+}
+
+static void update_pause_input(void) {
+    const uint16_t buttons = read_pad_buttons();
+    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+
+    if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
+        app_state = APP_STATE_PLAY;
+        pad_previous_buttons = buttons;
+        return;
+    }
+
+    if (pressed_this_frame & PAD_UP) {
+        pause_selected_option--;
+
+        if (pause_selected_option < 0) {
+            pause_selected_option = PAUSE_OPTION_COUNT - 1;
+        }
+    }
+
+    if (pressed_this_frame & PAD_DOWN) {
+        pause_selected_option++;
+
+        if (pause_selected_option >= PAUSE_OPTION_COUNT) {
+            pause_selected_option = 0;
+        }
+    }
+
+    if (
+        (pressed_this_frame & PAD_CROSS) ||
+        (pressed_this_frame & PAD_CIRCLE)
+    ) {
+        switch (pause_selected_option) {
+            case PAUSE_OPTION_RESUME:
+                app_state = APP_STATE_PLAY;
+                break;
+
+            case PAUSE_OPTION_TOGGLE_FLY:
+                fly_mode_enabled = !fly_mode_enabled;
+
+                if (!fly_mode_enabled) {
+                    snap_camera_to_ground();
+                    set_system_status("MODE WALK", 90);
+                } else {
+                    set_system_status("MODE FLY", 90);
+                }
+                break;
+
+            case PAUSE_OPTION_TOGGLE_HUD:
+                hud_visible = !hud_visible;
+
+                if (hud_visible) {
+                    set_system_status("HUD ON", 90);
+                } else {
+                    set_system_status("HUD OFF", 90);
+                }
+                break;
+
+            case PAUSE_OPTION_SAVE_GAME:
+                if (save_game_to_memory_card()) {
+                    set_system_status("SAVE OK", 90);
+                } else {
+                    set_system_status("SAVE FAILED", 120);
+                }
+                break;
+
+            case PAUSE_OPTION_LOAD_GAME:
+                if (load_game_from_memory_card()) {
+                    app_state = APP_STATE_PLAY;
+                    set_system_status("LOAD OK", 90);
+                } else {
+                    set_system_status("LOAD FAILED", 120);
+                }
+                break;
+
+            case PAUSE_OPTION_RETURN_MENU:
+            default:
+                app_state = APP_STATE_MENU;
+                menu_selected_option = MENU_OPTION_NEW_GAME;
+                pause_selected_option = PAUSE_OPTION_RESUME;
+                set_system_status("MAIN MENU", 90);
+                break;
+        }
+    }
+
+    pad_previous_buttons = buttons;
+}
+static void draw_menu(RenderContext *context) {
+    draw_menu_background(context);
+
+    draw_text(context, 93, 22, 1, "MINECRAFT PS1");
+    draw_text(context, 91, 20, 0, "MINECRAFT PS1");
+    draw_text(context, 72, 38, 0, "PLAYSTATION STYLE DEMAKE");
+
+    draw_menu_option(
+        context,
+        90,
+        82,
+        140,
+        "NEW GAME",
+        menu_selected_option == MENU_OPTION_NEW_GAME
+    );
+    draw_menu_option(
+        context,
+        90,
+        112,
+        140,
+        "LOAD GAME",
+        menu_selected_option == MENU_OPTION_LOAD_GAME
+    );
+
+    draw_minecraft_button(context, 32, 206, 256, 20, 0);
+    draw_text(context, 50, 211, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE/START OK");
+
+    if (system_status_timer > 0) {
+        draw_minecraft_button(context, 102, 178, 116, 18, 0);
+        draw_text(context, 120, 182, 0, system_status_text);
+    }
+}
+static void draw_pause_menu(RenderContext *context) {
+    draw_filled_rect(context, 0, 0, SCREEN_W, SCREEN_H, 7, 18, 18, 22);
+
+    draw_minecraft_texture_block(context, 24, 20, 16, 2, 6, 100);
+    draw_minecraft_texture_block(context, 40, 20, 16, 2, 6, 101);
+    draw_minecraft_texture_block(context, 56, 20, 16, 2, 6, 102);
+    draw_minecraft_texture_block(context, 248, 20, 16, 1, 6, 103);
+    draw_minecraft_texture_block(context, 264, 20, 16, 0, 6, 104);
+    draw_minecraft_texture_block(context, 280, 20, 16, 0, 6, 105);
+
+    draw_text(context, 122, 28, 0, "GAME MENU");
+
+    draw_pause_option(
+        context,
+        78,
+        52,
+        164,
+        "BACK TO GAME",
+        pause_selected_option == PAUSE_OPTION_RESUME
+    );
+    draw_pause_option(
+        context,
+        78,
+        76,
+        164,
+        fly_mode_enabled ? "SWITCH TO WALK" : "SWITCH TO FLY",
+        pause_selected_option == PAUSE_OPTION_TOGGLE_FLY
+    );
+    draw_pause_option(
+        context,
+        78,
+        100,
+        164,
+        hud_visible ? "HIDE HUD" : "SHOW HUD",
+        pause_selected_option == PAUSE_OPTION_TOGGLE_HUD
+    );
+    draw_pause_option(
+        context,
+        78,
+        124,
+        164,
+        "SAVE GAME",
+        pause_selected_option == PAUSE_OPTION_SAVE_GAME
+    );
+    draw_pause_option(
+        context,
+        78,
+        148,
+        164,
+        "LOAD GAME",
+        pause_selected_option == PAUSE_OPTION_LOAD_GAME
+    );
+    draw_pause_option(
+        context,
+        78,
+        172,
+        164,
+        "MAIN MENU",
+        pause_selected_option == PAUSE_OPTION_RETURN_MENU
+    );
+
+    draw_text(context, 74, 205, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
+    draw_text(context, 86, 220, 0, "START/TRIANGLE BACK");
+
+    if (system_status_timer > 0) {
+        draw_minecraft_button(context, 104, 4, 112, 18, 0);
+        draw_text(context, 122, 8, 0, system_status_text);
+    }
+}
 int main(int argc, const char **argv) {
     (void)argc;
     (void)argv;
@@ -1665,31 +2547,39 @@ int main(int argc, const char **argv) {
      */
     setup_context(&ctx, SCREEN_W, SCREEN_H, 48, 80, 130);
     init_input();
+    init_memory_card();
 
     reset_camera();
+    app_state = APP_STATE_MENU;
+    set_system_status("", 0);
 
     for (;;) {
+        tick_system_status();
+
+        if (app_state == APP_STATE_MENU) {
+            update_menu_input();
+            draw_menu(&ctx);
+            flip_buffers(&ctx);
+            continue;
+        }
+
+        if (app_state == APP_STATE_PAUSE) {
+            update_pause_input();
+            rebuild_mesh_if_needed();
+            transform_all_vertices();
+            draw_mesh(&ctx);
+            draw_pause_menu(&ctx);
+            flip_buffers(&ctx);
+            continue;
+        }
+
         update_input();
 
         rebuild_mesh_if_needed();
         transform_all_vertices();
         draw_mesh(&ctx);
         draw_crosshair(&ctx);
-
-        draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "TRUE 3D VOXEL STORAGE");
-        draw_text(&ctx, 8, 48, 0, "SQUARE REMOVE  CIRCLE ADD");
-        draw_text(&ctx, 8, 64, 0, "BODY COLLISION FIX");
-
-        if (fly_mode_enabled) {
-            draw_text(&ctx, 8, 80, 0, "MODE: FLY  START WALK");
-            draw_text(&ctx, 8, 96, 0, "DPAD MOVE/TURN L1/R1 STRAFE");
-            draw_text(&ctx, 8, 112, 0, "TRI/CROSS PITCH L2/R2 HEIGHT");
-        } else {
-            draw_text(&ctx, 8, 80, 0, "MODE: WALK  START FLY");
-            draw_text(&ctx, 8, 96, 0, "DPAD WALK/TURN L1/R1 STRAFE");
-            draw_text(&ctx, 8, 112, 0, "TRI/CROSS PITCH SELECT RESET");
-        }
+        draw_game_hud(&ctx);
 
         flip_buffers(&ctx);
     }
