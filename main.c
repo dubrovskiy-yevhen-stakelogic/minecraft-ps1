@@ -19,10 +19,11 @@
 
 #define VIEW_RADIUS 8
 #define VIEW_SIZE ((VIEW_RADIUS * 2) + 1)
+#define PADDED_VIEW_SIZE (VIEW_SIZE + 2)
 #define GRID_VERTICES_PER_SIDE (VIEW_SIZE + 1)
 
-#define MAX_COLUMN_HEIGHT 6
-#define GRID_Y_LINES (MAX_COLUMN_HEIGHT + 1)
+#define WORLD_HEIGHT 8
+#define GRID_Y_LINES (WORLD_HEIGHT + 1)
 
 #define FOCAL_LENGTH 220
 #define NEAR_PLANE_Z 24
@@ -30,10 +31,10 @@
 #define FRUSTUM_MARGIN_X 96
 #define FRUSTUM_MARGIN_Y 72
 
-#define MAX_MESH_VERTICES (GRID_VERTICES_PER_SIDE * GRID_VERTICES_PER_SIDE * GRID_Y_LINES)
-#define MAX_MESH_FACES 1536
+#define MAX_MESH_VERTICES 8192
+#define MAX_MESH_FACES 2048
 
-#define MAX_COLUMN_EDITS 128
+#define MAX_BLOCK_EDITS 256
 #define RAYCAST_MAX_DISTANCE 420
 #define RAYCAST_STEP 8
 
@@ -58,6 +59,8 @@
 #define FLY_VERTICAL_SPEED 10
 
 #define PLAYER_EYE_HEIGHT 72
+#define PLAYER_COLLISION_RADIUS 36
+#define MAX_AUTO_DROP_BLOCKS 1
 
 #define PAD_BUFFER_SIZE 34
 
@@ -95,18 +98,36 @@ typedef struct {
 } MeshFace;
 
 typedef struct {
-    int tile_x;
-    int tile_z;
-    int height;
-    uint8_t used;
-} ColumnEdit;
+    int x;
+    int y;
+    int z;
+    uint8_t type;
+} BlockEdit;
 
 typedef struct {
     int found;
-    int tile_x;
-    int tile_z;
-    int level;
+    int hit_x;
+    int hit_y;
+    int hit_z;
+    int place_x;
+    int place_y;
+    int place_z;
 } RaycastHit;
+
+enum {
+    BLOCK_AIR = 0,
+    BLOCK_DIRT = 1,
+    BLOCK_GRASS = 2
+};
+
+enum {
+    FACE_NEG_Z = 0,
+    FACE_POS_Z = 1,
+    FACE_NEG_X = 2,
+    FACE_POS_X = 3,
+    FACE_NEG_Y = 4,
+    FACE_POS_Y = 5
+};
 
 static RenderContext ctx;
 
@@ -118,27 +139,28 @@ static MeshFace mesh_faces[MAX_MESH_FACES];
 static int mesh_vertex_count = 0;
 static int mesh_face_count = 0;
 
-static int vertex_lookup[GRID_Y_LINES][GRID_VERTICES_PER_SIDE][GRID_VERTICES_PER_SIDE];
-
 static int mesh_center_tile_x = 999999;
 static int mesh_center_tile_z = 999999;
 static int mesh_dirty = 1;
 
-static ColumnEdit column_edits[MAX_COLUMN_EDITS];
-static int column_edit_count = 0;
+static int vertex_lookup[GRID_Y_LINES][GRID_VERTICES_PER_SIDE][GRID_VERTICES_PER_SIDE];
+static uint8_t local_blocks[WORLD_HEIGHT][PADDED_VIEW_SIZE][PADDED_VIEW_SIZE];
+
+static BlockEdit block_edits[MAX_BLOCK_EDITS];
+static int block_edit_count = 0;
 
 static uint8_t pad_buffers[2][PAD_BUFFER_SIZE];
 
 static int camera_pos_x = 0;
-static int camera_pos_y = PLAYER_EYE_HEIGHT;
+static int camera_pos_y = 120;
 static int camera_pos_z = 0;
 
 static int camera_yaw = 0;
 static int camera_pitch = DEFAULT_CAMERA_PITCH;
 
 /*
- * 0 = walk on infinite flat world.
- * 1 = free fly/debug camera.
+ * 0 = walk on voxel world
+ * 1 = free fly/debug camera
  */
 static int fly_mode_enabled = 0;
 
@@ -211,36 +233,49 @@ static int tile_to_world_center(int tile) {
     return tile * BLOCK_SIZE;
 }
 
-static int y_line_to_world_y(int y_line) {
-    return -BLOCK_SIZE + (y_line * BLOCK_SIZE);
+/*
+ * World Y mapping:
+ * block_y = 0 occupies [-48, 0]
+ * block_y = 1 occupies [0, 48]
+ * ...
+ */
+static int world_to_block_y(int value) {
+    return floor_div(value + BLOCK_SIZE, BLOCK_SIZE);
 }
 
-static int get_floor_y_for_height(int height) {
-    if (height <= 0) {
-        return -100000;
+static int block_y_to_world_min(int block_y) {
+    return -BLOCK_SIZE + (block_y * BLOCK_SIZE);
+}
+
+static int block_y_to_world_top(int block_y) {
+    return block_y_to_world_min(block_y) + BLOCK_SIZE;
+}
+
+static int get_generated_block_type(int x, int y, int z) {
+    (void)x;
+    (void)z;
+
+    if (y < 0 || y >= WORLD_HEIGHT) {
+        return BLOCK_AIR;
     }
 
-    return y_line_to_world_y(height);
+    if (y == 0) {
+        return BLOCK_DIRT;
+    }
+
+    if (y == 1) {
+        return BLOCK_GRASS;
+    }
+
+    return BLOCK_AIR;
 }
 
-static int grid_vertex_index(int x, int z) {
-    return (z * GRID_VERTICES_PER_SIDE) + x;
-}
-
-static int get_column_edit_index(int tile_x, int tile_z) {
-    /*
-     * Important performance fix:
-     *
-     * Old version scanned all MAX_COLUMN_EDITS slots even when there were
-     * zero edits. Mesh rebuild calls get_column_height() many times per tile,
-     * so this caused a huge CPU spike when walking into a new tile.
-     *
-     * Now we scan only active edits.
-     */
-    for (int i = 0; i < column_edit_count; i++) {
+static int get_block_edit_index(int x, int y, int z) {
+    for (int i = 0; i < block_edit_count; i++) {
         if (
-            column_edits[i].tile_x == tile_x &&
-            column_edits[i].tile_z == tile_z
+            block_edits[i].x == x &&
+            block_edits[i].y == y &&
+            block_edits[i].z == z
         ) {
             return i;
         }
@@ -249,48 +284,39 @@ static int get_column_edit_index(int tile_x, int tile_z) {
     return -1;
 }
 
-static int get_column_height(int tile_x, int tile_z) {
-    const int edit_index = get_column_edit_index(tile_x, tile_z);
+static int get_block_type(int x, int y, int z) {
+    const int edit_index = get_block_edit_index(x, y, z);
 
     if (edit_index >= 0) {
-        return column_edits[edit_index].height;
+        return block_edits[edit_index].type;
     }
 
-    /*
-     * Infinite default flat world.
-     */
-    return 1;
+    return get_generated_block_type(x, y, z);
 }
 
-static void remove_column_edit_at_index(int index) {
-    if (index < 0 || index >= column_edit_count) {
+static void remove_block_edit_at_index(int index) {
+    if (index < 0 || index >= block_edit_count) {
         return;
     }
 
-    /*
-     * Compact array by moving last edit into removed slot.
-     * Order is irrelevant and this keeps lookup O(active_edits).
-     */
-    column_edit_count--;
+    block_edit_count--;
 
-    if (index != column_edit_count) {
-        column_edits[index] = column_edits[column_edit_count];
+    if (index != block_edit_count) {
+        block_edits[index] = block_edits[block_edit_count];
     }
-
-    column_edits[column_edit_count].used = 0;
 }
 
-static void set_column_height(int tile_x, int tile_z, int height) {
-    height = clamp_int(height, 0, MAX_COLUMN_HEIGHT);
+static void set_block_type(int x, int y, int z, int type) {
+    if (y < 0 || y >= WORLD_HEIGHT) {
+        return;
+    }
 
-    const int edit_index = get_column_edit_index(tile_x, tile_z);
+    const int generated_type = get_generated_block_type(x, y, z);
+    const int edit_index = get_block_edit_index(x, y, z);
 
-    /*
-     * Default height is 1. If user returns column to default, remove edit.
-     */
-    if (height == 1) {
+    if (type == generated_type) {
         if (edit_index >= 0) {
-            remove_column_edit_at_index(edit_index);
+            remove_block_edit_at_index(edit_index);
         }
 
         mesh_dirty = 1;
@@ -298,22 +324,32 @@ static void set_column_height(int tile_x, int tile_z, int height) {
     }
 
     if (edit_index >= 0) {
-        column_edits[edit_index].height = height;
+        block_edits[edit_index].type = (uint8_t)type;
         mesh_dirty = 1;
         return;
     }
 
-    if (column_edit_count >= MAX_COLUMN_EDITS) {
+    if (block_edit_count >= MAX_BLOCK_EDITS) {
         return;
     }
 
-    column_edits[column_edit_count].used = 1;
-    column_edits[column_edit_count].tile_x = tile_x;
-    column_edits[column_edit_count].tile_z = tile_z;
-    column_edits[column_edit_count].height = height;
-    column_edit_count++;
+    block_edits[block_edit_count].x = x;
+    block_edits[block_edit_count].y = y;
+    block_edits[block_edit_count].z = z;
+    block_edits[block_edit_count].type = (uint8_t)type;
+    block_edit_count++;
 
     mesh_dirty = 1;
+}
+
+static int get_top_solid_block_y(int tile_x, int tile_z) {
+    for (int y = WORLD_HEIGHT - 1; y >= 0; y--) {
+        if (get_block_type(tile_x, y, tile_z) != BLOCK_AIR) {
+            return y;
+        }
+    }
+
+    return -1;
 }
 
 static void setup_context(RenderContext *context, int w, int h, int r, int g, int b) {
@@ -450,27 +486,111 @@ static uint16_t read_pad_buttons(void) {
     return (uint16_t)(~pad->btn);
 }
 
-static void snap_camera_to_ground(void) {
-    const int tile_x = world_to_tile(camera_pos_x);
-    const int tile_z = world_to_tile(camera_pos_z);
-    const int height = get_column_height(tile_x, tile_z);
+static int get_surface_top_block_y_at_world_position(int world_x, int world_z) {
+    return get_top_solid_block_y(
+        world_to_tile(world_x),
+        world_to_tile(world_z)
+    );
+}
 
-    if (height <= 0) {
+static int get_player_center_top_block_y(void) {
+    return get_surface_top_block_y_at_world_position(
+        camera_pos_x,
+        camera_pos_z
+    );
+}
+
+static int is_player_footprint_clear_at(
+    int world_x,
+    int world_z,
+    int target_top_block_y
+) {
+    int sample_x[9];
+    int sample_z[9];
+
+    /*
+     * Square-ish collision footprint.
+     *
+     * This is intentionally not a renderer fix. The issue is that the camera
+     * can get close enough to a side wall that the near plane clips into the
+     * voxel. When that happens, blue background leaks through while turning.
+     *
+     * We keep the camera farther from block faces by testing a small player
+     * body footprint before accepting movement.
+     */
+    sample_x[0] = world_x;
+    sample_z[0] = world_z;
+
+    sample_x[1] = world_x - PLAYER_COLLISION_RADIUS;
+    sample_z[1] = world_z;
+
+    sample_x[2] = world_x + PLAYER_COLLISION_RADIUS;
+    sample_z[2] = world_z;
+
+    sample_x[3] = world_x;
+    sample_z[3] = world_z - PLAYER_COLLISION_RADIUS;
+
+    sample_x[4] = world_x;
+    sample_z[4] = world_z + PLAYER_COLLISION_RADIUS;
+
+    sample_x[5] = world_x - PLAYER_COLLISION_RADIUS;
+    sample_z[5] = world_z - PLAYER_COLLISION_RADIUS;
+
+    sample_x[6] = world_x + PLAYER_COLLISION_RADIUS;
+    sample_z[6] = world_z - PLAYER_COLLISION_RADIUS;
+
+    sample_x[7] = world_x - PLAYER_COLLISION_RADIUS;
+    sample_z[7] = world_z + PLAYER_COLLISION_RADIUS;
+
+    sample_x[8] = world_x + PLAYER_COLLISION_RADIUS;
+    sample_z[8] = world_z + PLAYER_COLLISION_RADIUS;
+
+    for (int i = 0; i < 9; i++) {
+        const int sample_top_block_y = get_surface_top_block_y_at_world_position(
+            sample_x[i],
+            sample_z[i]
+        );
+
+        if (sample_top_block_y < 0) {
+            return 0;
+        }
+
+        /*
+         * Key rule:
+         *
+         * Do not auto-step onto higher blocks. A block next to the player is
+         * treated as a wall until we add a real jump/climb mechanic.
+         *
+         * This prevents the camera from sliding into side blocks and then
+         * seeing through them when turning.
+         */
+        if (sample_top_block_y > target_top_block_y) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static void snap_camera_to_ground(void) {
+    const int top_block_y = get_player_center_top_block_y();
+
+    if (top_block_y < 0) {
         return;
     }
 
-    camera_pos_y = get_floor_y_for_height(height) + PLAYER_EYE_HEIGHT;
+    camera_pos_y = block_y_to_world_top(top_block_y) + PLAYER_EYE_HEIGHT;
 }
 
 static void reset_camera(void) {
     fly_mode_enabled = 0;
 
     camera_pos_x = 0;
-    camera_pos_y = PLAYER_EYE_HEIGHT;
     camera_pos_z = 0;
-
     camera_yaw = 0;
     camera_pitch = DEFAULT_CAMERA_PITCH;
+
+    snap_camera_to_ground();
 
     mesh_center_tile_x = 999999;
     mesh_center_tile_z = 999999;
@@ -478,25 +598,39 @@ static void reset_camera(void) {
 }
 
 static int is_walk_target_valid(int next_x, int next_z) {
-    const int current_height = get_column_height(
-        world_to_tile(camera_pos_x),
-        world_to_tile(camera_pos_z)
+    const int current_top_block_y = get_player_center_top_block_y();
+    const int next_top_block_y = get_surface_top_block_y_at_world_position(
+        next_x,
+        next_z
     );
 
-    const int next_height = get_column_height(
-        world_to_tile(next_x),
-        world_to_tile(next_z)
-    );
-
-    if (next_height <= 0) {
+    if (current_top_block_y < 0 || next_top_block_y < 0) {
         return 0;
     }
 
     /*
-     * Simple Minecraft-like step rule:
-     * can walk up/down by one block, but not through tall walls.
+     * No automatic climb for now.
+     *
+     * The old rule allowed +1 block auto-step. That felt convenient, but it
+     * also meant a placed block could be treated like a step instead of a wall,
+     * letting the camera get too close to its side faces.
      */
-    if (iabs(next_height - current_height) > 1) {
+    if (next_top_block_y > current_top_block_y) {
+        return 0;
+    }
+
+    /*
+     * Allow a small drop, but do not walk off large cliffs/holes yet.
+     */
+    if ((current_top_block_y - next_top_block_y) > MAX_AUTO_DROP_BLOCKS) {
+        return 0;
+    }
+
+    if (!is_player_footprint_clear_at(
+        next_x,
+        next_z,
+        next_top_block_y
+    )) {
         return 0;
     }
 
@@ -525,8 +659,10 @@ static void get_camera_forward_direction(Vec3i *dir) {
     dir->z = (icos(camera_yaw) * cos_pitch) / FIXED_ONE;
 }
 
-static int y_to_block_level(int y) {
-    return floor_div(y + BLOCK_SIZE, BLOCK_SIZE);
+static int is_valid_block_position(int x, int y, int z) {
+    (void)x;
+    (void)z;
+    return (y >= 0 && y < WORLD_HEIGHT);
 }
 
 static RaycastHit raycast_block(void) {
@@ -534,32 +670,73 @@ static RaycastHit raycast_block(void) {
     Vec3i dir;
 
     hit.found = 0;
-    hit.tile_x = 0;
-    hit.tile_z = 0;
-    hit.level = 0;
+    hit.hit_x = 0;
+    hit.hit_y = 0;
+    hit.hit_z = 0;
+    hit.place_x = 0;
+    hit.place_y = 0;
+    hit.place_z = 0;
 
     get_camera_forward_direction(&dir);
 
-    for (int distance = 8; distance <= RAYCAST_MAX_DISTANCE; distance += RAYCAST_STEP) {
-        const int sample_x = camera_pos_x + ((dir.x * distance) / FIXED_ONE);
-        const int sample_y = camera_pos_y + ((dir.y * distance) / FIXED_ONE);
-        const int sample_z = camera_pos_z + ((dir.z * distance) / FIXED_ONE);
+    {
+        int last_empty_valid = 0;
+        int last_empty_x = 0;
+        int last_empty_y = 0;
+        int last_empty_z = 0;
 
-        const int tile_x = world_to_tile(sample_x);
-        const int tile_z = world_to_tile(sample_z);
-        const int height = get_column_height(tile_x, tile_z);
-        const int level = y_to_block_level(sample_y);
+        int previous_x = 999999;
+        int previous_y = 999999;
+        int previous_z = 999999;
 
-        if (height <= 0) {
-            continue;
-        }
+        for (int distance = 8; distance <= RAYCAST_MAX_DISTANCE; distance += RAYCAST_STEP) {
+            const int sample_x = camera_pos_x + ((dir.x * distance) / FIXED_ONE);
+            const int sample_y = camera_pos_y + ((dir.y * distance) / FIXED_ONE);
+            const int sample_z = camera_pos_z + ((dir.z * distance) / FIXED_ONE);
 
-        if (level >= 0 && level < height) {
-            hit.found = 1;
-            hit.tile_x = tile_x;
-            hit.tile_z = tile_z;
-            hit.level = level;
-            return hit;
+            const int block_x = world_to_tile(sample_x);
+            const int block_y = world_to_block_y(sample_y);
+            const int block_z = world_to_tile(sample_z);
+
+            if (
+                block_x == previous_x &&
+                block_y == previous_y &&
+                block_z == previous_z
+            ) {
+                continue;
+            }
+
+            previous_x = block_x;
+            previous_y = block_y;
+            previous_z = block_z;
+
+            if (!is_valid_block_position(block_x, block_y, block_z)) {
+                continue;
+            }
+
+            if (get_block_type(block_x, block_y, block_z) != BLOCK_AIR) {
+                hit.found = 1;
+                hit.hit_x = block_x;
+                hit.hit_y = block_y;
+                hit.hit_z = block_z;
+
+                if (last_empty_valid) {
+                    hit.place_x = last_empty_x;
+                    hit.place_y = last_empty_y;
+                    hit.place_z = last_empty_z;
+                } else {
+                    hit.place_x = block_x;
+                    hit.place_y = block_y + 1;
+                    hit.place_z = block_z;
+                }
+
+                return hit;
+            }
+
+            last_empty_valid = 1;
+            last_empty_x = block_x;
+            last_empty_y = block_y;
+            last_empty_z = block_z;
         }
     }
 
@@ -573,29 +750,43 @@ static void remove_target_block(void) {
         return;
     }
 
-    const int height = get_column_height(hit.tile_x, hit.tile_z);
-
-    if (height <= 0) {
-        return;
-    }
-
-    /*
-     * Height-column edit for now: remove top block from selected column.
-     */
-    set_column_height(hit.tile_x, hit.tile_z, height - 1);
+    set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
 
     if (!fly_mode_enabled) {
-        const int current_tile_x = world_to_tile(camera_pos_x);
-        const int current_tile_z = world_to_tile(camera_pos_z);
-
-        if (current_tile_x == hit.tile_x && current_tile_z == hit.tile_z) {
-            if (get_column_height(hit.tile_x, hit.tile_z) <= 0) {
-                set_column_height(hit.tile_x, hit.tile_z, 1);
-            }
-
-            snap_camera_to_ground();
-        }
+        snap_camera_to_ground();
     }
+}
+
+static int block_intersects_player_footprint(int block_x, int block_y, int block_z) {
+    const int player_top_block_y = get_player_center_top_block_y();
+
+    /*
+     * Only care about blocks around player's body height. This prevents placing
+     * a block into your own collision space.
+     */
+    if (player_top_block_y >= 0 && block_y <= player_top_block_y) {
+        return 0;
+    }
+
+    const int block_min_x = tile_to_world_center(block_x) - BLOCK_HALF;
+    const int block_max_x = tile_to_world_center(block_x) + BLOCK_HALF;
+    const int block_min_z = tile_to_world_center(block_z) - BLOCK_HALF;
+    const int block_max_z = tile_to_world_center(block_z) + BLOCK_HALF;
+
+    const int player_min_x = camera_pos_x - PLAYER_COLLISION_RADIUS;
+    const int player_max_x = camera_pos_x + PLAYER_COLLISION_RADIUS;
+    const int player_min_z = camera_pos_z - PLAYER_COLLISION_RADIUS;
+    const int player_max_z = camera_pos_z + PLAYER_COLLISION_RADIUS;
+
+    if (player_max_x <= block_min_x || player_min_x >= block_max_x) {
+        return 0;
+    }
+
+    if (player_max_z <= block_min_z || player_min_z >= block_max_z) {
+        return 0;
+    }
+
+    return 1;
 }
 
 static void add_target_block(void) {
@@ -605,16 +796,27 @@ static void add_target_block(void) {
         return;
     }
 
-    const int height = get_column_height(hit.tile_x, hit.tile_z);
+    if (!is_valid_block_position(hit.place_x, hit.place_y, hit.place_z)) {
+        return;
+    }
 
-    if (height >= MAX_COLUMN_HEIGHT) {
+    if (get_block_type(hit.place_x, hit.place_y, hit.place_z) != BLOCK_AIR) {
+        return;
+    }
+
+    if (block_intersects_player_footprint(
+        hit.place_x,
+        hit.place_y,
+        hit.place_z
+    )) {
         return;
     }
 
     /*
-     * Height-column edit for now: add block on top of selected column.
+     * Placed block type for now.
+     * Later we can switch this to current hotbar/material.
      */
-    set_column_height(hit.tile_x, hit.tile_z, height + 1);
+    set_block_type(hit.place_x, hit.place_y, hit.place_z, BLOCK_DIRT);
 }
 
 static void update_input(void) {
@@ -744,10 +946,82 @@ static void clear_vertex_lookup(void) {
     }
 }
 
+static void build_local_block_cache(int center_tile_x, int center_tile_z) {
+    const int start_tile_x = center_tile_x - VIEW_RADIUS;
+    const int start_tile_z = center_tile_z - VIEW_RADIUS;
+
+    /*
+     * local_blocks has a 1-block border around the visible 17x17 area.
+     * That lets us test neighbor blocks in O(1) without calling get_block_type()
+     * thousands of times during mesh generation.
+     */
+    for (int y = 0; y < WORLD_HEIGHT; y++) {
+        for (int z = 0; z < PADDED_VIEW_SIZE; z++) {
+            for (int x = 0; x < PADDED_VIEW_SIZE; x++) {
+                const int world_x = start_tile_x + x - 1;
+                const int world_z = start_tile_z + z - 1;
+
+                local_blocks[y][z][x] = (uint8_t)get_generated_block_type(
+                    world_x,
+                    y,
+                    world_z
+                );
+            }
+        }
+    }
+
+    /*
+     * Apply sparse edits only once per rebuild.
+     * Previous version scanned edits for every block lookup; this is what made
+     * each placed block progressively slow the game down.
+     */
+    for (int i = 0; i < block_edit_count; i++) {
+        const int local_x = block_edits[i].x - start_tile_x + 1;
+        const int local_z = block_edits[i].z - start_tile_z + 1;
+        const int y = block_edits[i].y;
+
+        if (
+            local_x < 0 ||
+            local_x >= PADDED_VIEW_SIZE ||
+            local_z < 0 ||
+            local_z >= PADDED_VIEW_SIZE ||
+            y < 0 ||
+            y >= WORLD_HEIGHT
+        ) {
+            continue;
+        }
+
+        local_blocks[y][local_z][local_x] = block_edits[i].type;
+    }
+}
+
+static int get_local_block_type(int visible_x, int y, int visible_z) {
+    /*
+     * visible_x/visible_z are usually 0..16.
+     * -1 and VIEW_SIZE are allowed for neighbor checks because local_blocks
+     * has a 1-block border.
+     */
+    const int local_x = visible_x + 1;
+    const int local_z = visible_z + 1;
+
+    if (
+        local_x < 0 ||
+        local_x >= PADDED_VIEW_SIZE ||
+        local_z < 0 ||
+        local_z >= PADDED_VIEW_SIZE ||
+        y < 0 ||
+        y >= WORLD_HEIGHT
+    ) {
+        return BLOCK_AIR;
+    }
+
+    return local_blocks[y][local_z][local_x];
+}
+
 static int add_grid_vertex(
     int local_x_line,
-    int local_z_line,
     int y_line,
+    int local_z_line,
     int start_world_x,
     int start_world_z
 ) {
@@ -764,7 +1038,7 @@ static int add_grid_vertex(
     Vec3i *vertex = &(mesh_vertices[mesh_vertex_count]);
 
     vertex->x = start_world_x + (local_x_line * BLOCK_SIZE);
-    vertex->y = y_line_to_world_y(y_line);
+    vertex->y = block_y_to_world_min(y_line);
     vertex->z = start_world_z + (local_z_line * BLOCK_SIZE);
 
     *lookup_entry = mesh_vertex_count;
@@ -775,17 +1049,17 @@ static int add_grid_vertex(
 
 static void push_face_by_grid_vertices(
     int x0,
-    int z0,
     int y0,
+    int z0,
     int x1,
-    int z1,
     int y1,
+    int z1,
     int x2,
-    int z2,
     int y2,
+    int z2,
     int x3,
-    int z3,
     int y3,
+    int z3,
     int start_world_x,
     int start_world_z,
     uint8_t r,
@@ -796,12 +1070,29 @@ static void push_face_by_grid_vertices(
         return;
     }
 
+    if (
+        x0 < 0 || x0 >= GRID_VERTICES_PER_SIDE ||
+        x1 < 0 || x1 >= GRID_VERTICES_PER_SIDE ||
+        x2 < 0 || x2 >= GRID_VERTICES_PER_SIDE ||
+        x3 < 0 || x3 >= GRID_VERTICES_PER_SIDE ||
+        z0 < 0 || z0 >= GRID_VERTICES_PER_SIDE ||
+        z1 < 0 || z1 >= GRID_VERTICES_PER_SIDE ||
+        z2 < 0 || z2 >= GRID_VERTICES_PER_SIDE ||
+        z3 < 0 || z3 >= GRID_VERTICES_PER_SIDE ||
+        y0 < 0 || y0 >= GRID_Y_LINES ||
+        y1 < 0 || y1 >= GRID_Y_LINES ||
+        y2 < 0 || y2 >= GRID_Y_LINES ||
+        y3 < 0 || y3 >= GRID_Y_LINES
+    ) {
+        return;
+    }
+
     MeshFace *face = &(mesh_faces[mesh_face_count]);
 
-    face->v[0] = (uint16_t)add_grid_vertex(x0, z0, y0, start_world_x, start_world_z);
-    face->v[1] = (uint16_t)add_grid_vertex(x1, z1, y1, start_world_x, start_world_z);
-    face->v[2] = (uint16_t)add_grid_vertex(x2, z2, y2, start_world_x, start_world_z);
-    face->v[3] = (uint16_t)add_grid_vertex(x3, z3, y3, start_world_x, start_world_z);
+    face->v[0] = (uint16_t)add_grid_vertex(x0, y0, z0, start_world_x, start_world_z);
+    face->v[1] = (uint16_t)add_grid_vertex(x1, y1, z1, start_world_x, start_world_z);
+    face->v[2] = (uint16_t)add_grid_vertex(x2, y2, z2, start_world_x, start_world_z);
+    face->v[3] = (uint16_t)add_grid_vertex(x3, y3, z3, start_world_x, start_world_z);
 
     face->r = r;
     face->g = g;
@@ -810,117 +1101,161 @@ static void push_face_by_grid_vertices(
     mesh_face_count++;
 }
 
-static void push_column_faces(
-    int local_x,
-    int local_z,
-    int world_tile_x,
-    int world_tile_z,
-    int start_world_x,
-    int start_world_z
-) {
-    const int height = get_column_height(world_tile_x, world_tile_z);
+static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uint8_t *b) {
+    if (block_type == BLOCK_GRASS) {
+        if (face == FACE_POS_Y) {
+            *r = 64;
+            *g = 175;
+            *b = 64;
+            return;
+        }
 
-    if (height <= 0) {
+        if (face == FACE_NEG_Y) {
+            *r = 45;
+            *g = 30;
+            *b = 18;
+            return;
+        }
+
+        *r = 118;
+        *g = 76;
+        *b = 38;
         return;
     }
 
+    if (block_type == BLOCK_DIRT) {
+        if (face == FACE_POS_Y) {
+            *r = 125;
+            *g = 82;
+            *b = 44;
+            return;
+        }
+
+        if (face == FACE_NEG_Y) {
+            *r = 45;
+            *g = 30;
+            *b = 18;
+            return;
+        }
+
+        *r = 105;
+        *g = 68;
+        *b = 35;
+        return;
+    }
+
+    *r = 180;
+    *g = 180;
+    *b = 180;
+}
+
+static void push_block_face(
+    int local_x,
+    int block_y,
+    int local_z,
+    int face,
+    int block_type,
+    int start_world_x,
+    int start_world_z
+) {
     const int x0 = local_x;
     const int x1 = local_x + 1;
+    const int y0 = block_y;
+    const int y1 = block_y + 1;
     const int z0 = local_z;
     const int z1 = local_z + 1;
 
-    /*
-     * Top face.
-     */
-    if (((world_tile_x ^ world_tile_z) & 1) == 0) {
-        push_face_by_grid_vertices(
-            x0, z0, height,
-            x1, z0, height,
-            x1, z1, height,
-            x0, z1, height,
-            start_world_x,
-            start_world_z,
-            64,
-            175,
-            64
-        );
-    } else {
-        push_face_by_grid_vertices(
-            x0, z0, height,
-            x1, z0, height,
-            x1, z1, height,
-            x0, z1, height,
-            start_world_x,
-            start_world_z,
-            54,
-            155,
-            54
-        );
-    }
+    uint8_t r;
+    uint8_t g;
+    uint8_t b_col;
 
-    /*
-     * Side faces where neighbor is lower.
-     * Sides are drawn as one vertical quad from neighbor height to column top.
-     */
-    const int neighbor_neg_z = get_column_height(world_tile_x, world_tile_z - 1);
-    const int neighbor_pos_z = get_column_height(world_tile_x, world_tile_z + 1);
-    const int neighbor_neg_x = get_column_height(world_tile_x - 1, world_tile_z);
-    const int neighbor_pos_x = get_column_height(world_tile_x + 1, world_tile_z);
+    get_face_color(block_type, face, &r, &g, &b_col);
 
-    if (neighbor_neg_z < height) {
-        push_face_by_grid_vertices(
-            x0, z0, neighbor_neg_z,
-            x0, z0, height,
-            x1, z0, height,
-            x1, z0, neighbor_neg_z,
-            start_world_x,
-            start_world_z,
-            118,
-            76,
-            38
-        );
-    }
+    switch (face) {
+        case FACE_NEG_Z:
+            push_face_by_grid_vertices(
+                x0, y0, z0,
+                x0, y1, z0,
+                x1, y1, z0,
+                x1, y0, z0,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
 
-    if (neighbor_pos_z < height) {
-        push_face_by_grid_vertices(
-            x1, z1, neighbor_pos_z,
-            x1, z1, height,
-            x0, z1, height,
-            x0, z1, neighbor_pos_z,
-            start_world_x,
-            start_world_z,
-            95,
-            60,
-            32
-        );
-    }
+        case FACE_POS_Z:
+            push_face_by_grid_vertices(
+                x1, y0, z1,
+                x1, y1, z1,
+                x0, y1, z1,
+                x0, y0, z1,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
 
-    if (neighbor_neg_x < height) {
-        push_face_by_grid_vertices(
-            x0, z1, neighbor_neg_x,
-            x0, z1, height,
-            x0, z0, height,
-            x0, z0, neighbor_neg_x,
-            start_world_x,
-            start_world_z,
-            105,
-            68,
-            35
-        );
-    }
+        case FACE_NEG_X:
+            push_face_by_grid_vertices(
+                x0, y0, z1,
+                x0, y1, z1,
+                x0, y1, z0,
+                x0, y0, z0,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
 
-    if (neighbor_pos_x < height) {
-        push_face_by_grid_vertices(
-            x1, z0, neighbor_pos_x,
-            x1, z0, height,
-            x1, z1, height,
-            x1, z1, neighbor_pos_x,
-            start_world_x,
-            start_world_z,
-            130,
-            84,
-            42
-        );
+        case FACE_POS_X:
+            push_face_by_grid_vertices(
+                x1, y0, z0,
+                x1, y1, z0,
+                x1, y1, z1,
+                x1, y0, z1,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
+
+        case FACE_NEG_Y:
+            push_face_by_grid_vertices(
+                x0, y0, z1,
+                x1, y0, z1,
+                x1, y0, z0,
+                x0, y0, z0,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
+
+        case FACE_POS_Y:
+        default:
+            push_face_by_grid_vertices(
+                x0, y1, z0,
+                x1, y1, z0,
+                x1, y1, z1,
+                x0, y1, z1,
+                start_world_x,
+                start_world_z,
+                r,
+                g,
+                b_col
+            );
+            break;
     }
 }
 
@@ -935,17 +1270,93 @@ static void build_world_mesh(int center_tile_x, int center_tile_z) {
     mesh_face_count = 0;
 
     clear_vertex_lookup();
+    build_local_block_cache(center_tile_x, center_tile_z);
 
     for (int z = 0; z < VIEW_SIZE; z++) {
         for (int x = 0; x < VIEW_SIZE; x++) {
-            push_column_faces(
-                x,
-                z,
-                start_tile_x + x,
-                start_tile_z + z,
-                start_world_x,
-                start_world_z
-            );
+            for (int y = 0; y < WORLD_HEIGHT; y++) {
+                const int block_type = get_local_block_type(x, y, z);
+
+                if (block_type == BLOCK_AIR) {
+                    continue;
+                }
+
+                if (get_local_block_type(x, y + 1, z) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_POS_Y,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+
+                /*
+                 * Skip bottom face at world floor to save some performance.
+                 * Floating blocks still get bottom faces.
+                 */
+                if (y > 0 && get_local_block_type(x, y - 1, z) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_NEG_Y,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+
+                if (get_local_block_type(x, y, z - 1) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_NEG_Z,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+
+                if (get_local_block_type(x, y, z + 1) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_POS_Z,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+
+                if (get_local_block_type(x - 1, y, z) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_NEG_X,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+
+                if (get_local_block_type(x + 1, y, z) == BLOCK_AIR) {
+                    push_block_face(
+                        x,
+                        y,
+                        z,
+                        FACE_POS_X,
+                        block_type,
+                        start_world_x,
+                        start_world_z
+                    );
+                }
+            }
         }
     }
 
@@ -1190,15 +1601,6 @@ static int face_is_outside_frustum(const MeshFace *face) {
             z = NEAR_PLANE_Z;
         }
 
-        /*
-         * Screen projection:
-         * screen_x = center + x * FOCAL_LENGTH / z
-         *
-         * So a rough camera-space visible range is:
-         * abs(x) <= (half_screen + margin) * z / FOCAL_LENGTH
-         *
-         * This is intentionally generous to avoid popping.
-         */
         const int max_x = (((SCREEN_W / 2) + FRUSTUM_MARGIN_X) * z) / FOCAL_LENGTH;
         const int max_y = (((SCREEN_H / 2) + FRUSTUM_MARGIN_Y) * z) / FOCAL_LENGTH;
 
@@ -1233,15 +1635,6 @@ static void draw_mesh(RenderContext *context) {
     for (int i = 0; i < mesh_face_count; i++) {
         const MeshFace *face = &(mesh_faces[i]);
 
-        /*
-         * Important optimization:
-         * Do cheap face-level visibility tests before near clipping.
-         *
-         * This fixes two problems:
-         * 1. FPS loss: we no longer clip/project hundreds of invisible faces.
-         * 2. Behind-camera artifacts: faces behind the player no longer get
-         *    clipped onto the near plane and rendered as garbage.
-         */
         if (face_center_z(face) <= NEAR_PLANE_Z) {
             continue;
         }
@@ -1284,9 +1677,9 @@ int main(int argc, const char **argv) {
         draw_crosshair(&ctx);
 
         draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "SQUARE REMOVE  CIRCLE ADD");
-        draw_text(&ctx, 8, 48, 0, "VISIBILITY CULLING");
-        draw_text(&ctx, 8, 64, 0, "FAST SPARSE EDITS");
+        draw_text(&ctx, 8, 32, 0, "TRUE 3D VOXEL STORAGE");
+        draw_text(&ctx, 8, 48, 0, "SQUARE REMOVE  CIRCLE ADD");
+        draw_text(&ctx, 8, 64, 0, "BODY COLLISION FIX");
 
         if (fly_mode_enabled) {
             draw_text(&ctx, 8, 80, 0, "MODE: FLY  START WALK");
