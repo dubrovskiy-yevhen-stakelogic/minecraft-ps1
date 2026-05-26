@@ -1,0 +1,12 @@
+{
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": false,
+    "C_Cpp.default.compilerPath": "C:/PSn00bSDK/bin/mipsel-none-elf-gcc.exe",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/**",
+        "C:/PSn00bSDK/include",
+        "C:/PSn00bSDK/include/libpsn00b"
+    ],
+    "C_Cpp.default.cStandard": "c99",
+    "C_Cpp.default.intelliSenseMode": "gcc-x86"
+}
