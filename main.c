@@ -7,13 +7,29 @@
 #define SCREEN_W 320
 #define SCREEN_H 240
 
-#define OT_LENGTH 64
-#define BUFFER_LENGTH 16384
+#define OT_LENGTH 256
+#define BUFFER_LENGTH 65536
 
 #define FIXED_ONE 1024
-#define CUBE_SIZE 72
-#define CAMERA_Z 360
-#define FOCAL_LENGTH 180
+
+#define BLOCK_HALF 24
+#define BLOCK_SIZE (BLOCK_HALF * 2)
+
+#define CHUNK_W 7
+#define CHUNK_D 7
+
+#define CAMERA_Z 680
+#define FOCAL_LENGTH 220
+
+#define MAX_WORLD_FACES 256
+#define MAX_RENDER_FACES 256
+
+#define CAMERA_TILT_X (-7)
+
+/*
+ * Bigger value = slower rotation and less CPU work.
+ */
+#define GEOMETRY_UPDATE_INTERVAL 6
 
 typedef struct {
     DISPENV disp_env;
@@ -41,20 +57,34 @@ typedef struct {
 } ProjectedVertex;
 
 typedef struct {
-    uint8_t a;
-    uint8_t b;
-    uint8_t c;
-    uint8_t d;
+    Vec3i vertices[4];
 
     uint8_t r;
     uint8_t g;
-    uint8_t b_col;
-} CubeFace;
+    uint8_t b;
+} WorldFace;
 
 typedef struct {
-    const CubeFace *face;
+    ProjectedVertex vertices[4];
     int depth;
-} FaceToDraw;
+
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} RenderFace;
+
+typedef struct {
+    uint8_t indices[4];
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} BlockFace;
+
+static WorldFace world_faces[MAX_WORLD_FACES];
+static int world_face_count = 0;
+
+static RenderFace cached_render_faces[MAX_RENDER_FACES];
+static int cached_render_face_count = 0;
 
 /*
  * 64-step sine table.
@@ -73,43 +103,58 @@ static const int16_t sin_table[64] = {
     -724, -650, -569, -483, -391, -297, -200, -100
 };
 
-static const Vec3i cube_vertices[8] = {
-    { -CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE }, /* 0 */
-    {  CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE }, /* 1 */
-    {  CUBE_SIZE,  CUBE_SIZE, -CUBE_SIZE }, /* 2 */
-    { -CUBE_SIZE,  CUBE_SIZE, -CUBE_SIZE }, /* 3 */
-
-    { -CUBE_SIZE, -CUBE_SIZE,  CUBE_SIZE }, /* 4 */
-    {  CUBE_SIZE, -CUBE_SIZE,  CUBE_SIZE }, /* 5 */
-    {  CUBE_SIZE,  CUBE_SIZE,  CUBE_SIZE }, /* 6 */
-    { -CUBE_SIZE,  CUBE_SIZE,  CUBE_SIZE }  /* 7 */
+/*
+ * height_map[z][x]
+ */
+static const uint8_t height_map[CHUNK_D][CHUNK_W] = {
+    { 0, 0, 1, 1, 1, 0, 0 },
+    { 0, 1, 1, 2, 1, 1, 0 },
+    { 1, 1, 2, 3, 2, 1, 1 },
+    { 1, 2, 3, 4, 3, 2, 1 },
+    { 1, 1, 2, 3, 2, 1, 1 },
+    { 0, 1, 1, 2, 1, 1, 0 },
+    { 0, 0, 1, 1, 1, 0, 0 }
 };
 
-/*
- * Important:
- * Vertex order is consistent and outward-facing.
- *
- * Camera is at Z=0 and looks toward +Z.
- * A face is visible when its normal points toward -Z.
- */
-static const CubeFace cube_faces[6] = {
-    /* Back / nearest at zero rotation, normal -Z */
-    { 0, 3, 2, 1,  55, 190,  75 },
+enum {
+    FACE_NEG_Z = 0,
+    FACE_POS_Z = 1,
+    FACE_NEG_X = 2,
+    FACE_POS_X = 3,
+    FACE_NEG_Y = 4,
+    FACE_POS_Y = 5
+};
 
-    /* Front / farthest at zero rotation, normal +Z */
-    { 4, 5, 6, 7,  35, 120,  55 },
+static const Vec3i block_local_vertices[8] = {
+    { -BLOCK_HALF, -BLOCK_HALF, -BLOCK_HALF },
+    {  BLOCK_HALF, -BLOCK_HALF, -BLOCK_HALF },
+    {  BLOCK_HALF,  BLOCK_HALF, -BLOCK_HALF },
+    { -BLOCK_HALF,  BLOCK_HALF, -BLOCK_HALF },
 
-    /* Left, normal -X */
-    { 0, 4, 7, 3,  45, 150,  65 },
+    { -BLOCK_HALF, -BLOCK_HALF,  BLOCK_HALF },
+    {  BLOCK_HALF, -BLOCK_HALF,  BLOCK_HALF },
+    {  BLOCK_HALF,  BLOCK_HALF,  BLOCK_HALF },
+    { -BLOCK_HALF,  BLOCK_HALF,  BLOCK_HALF }
+};
 
-    /* Right, normal +X */
-    { 1, 2, 6, 5,  80, 220, 100 },
+static const BlockFace block_faces[6] = {
+    /* -Z side */
+    { { 0, 3, 2, 1 }, 118, 76, 38 },
 
-    /* Bottom, normal -Y */
-    { 0, 1, 5, 4,  35, 100,  50 },
+    /* +Z side */
+    { { 4, 5, 6, 7 }, 95, 60, 32 },
 
-    /* Top, normal +Y */
-    { 3, 7, 6, 2, 100, 240, 120 }
+    /* -X side */
+    { { 0, 4, 7, 3 }, 105, 68, 35 },
+
+    /* +X side */
+    { { 1, 2, 6, 5 }, 130, 84, 42 },
+
+    /* -Y bottom */
+    { { 0, 1, 5, 4 }, 55, 38, 24 },
+
+    /* +Y top */
+    { { 3, 7, 6, 2 }, 70, 185, 70 }
 };
 
 static int isin(int angle) {
@@ -191,50 +236,129 @@ static void draw_text(RenderContext *ctx, int x, int y, int z, const char *text)
     assert(ctx->next_packet <= &(buffer->buffer[BUFFER_LENGTH]));
 }
 
-static void transform_cube(
-    Vec3i camera_vertices[8],
-    ProjectedVertex projected_vertices[8],
-    int angle
-) {
-    const int sin_y = isin(angle);
-    const int cos_y = icos(angle);
+static int get_height(int x, int z) {
+    if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D) {
+        return 0;
+    }
 
-    const int sin_x = isin(angle / 2);
-    const int cos_x = icos(angle / 2);
+    return height_map[z][x];
+}
 
-    for (int i = 0; i < 8; i++) {
-        const int x = cube_vertices[i].x;
-        const int y = cube_vertices[i].y;
-        const int z = cube_vertices[i].z;
+static Vec3i get_block_vertex(int block_x, int block_y, int block_z, uint8_t vertex_index) {
+    const int origin_x = -((CHUNK_W - 1) * BLOCK_SIZE) / 2;
+    const int origin_z = -((CHUNK_D - 1) * BLOCK_SIZE) / 2;
 
-        /*
-         * Rotate around Y.
-         */
-        const int x1 = ((x * cos_y) + (z * sin_y)) / FIXED_ONE;
-        const int z1 = ((-x * sin_y) + (z * cos_y)) / FIXED_ONE;
+    Vec3i result;
 
-        /*
-         * Rotate around X.
-         */
-        const int y2 = ((y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
-        const int z2 = ((y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
+    result.x = origin_x + (block_x * BLOCK_SIZE) + block_local_vertices[vertex_index].x;
+    result.y = -95 + (block_y * BLOCK_SIZE) + block_local_vertices[vertex_index].y;
+    result.z = origin_z + (block_z * BLOCK_SIZE) + block_local_vertices[vertex_index].z;
 
-        const int camera_z = z2 + CAMERA_Z;
+    return result;
+}
 
-        camera_vertices[i].x = x1;
-        camera_vertices[i].y = y2;
-        camera_vertices[i].z = camera_z;
+static void push_world_face(int block_x, int block_y, int block_z, int face_index) {
+    if (world_face_count >= MAX_WORLD_FACES) {
+        return;
+    }
 
-        projected_vertices[i].x = (SCREEN_W / 2) + ((x1 * FOCAL_LENGTH) / camera_z);
-        projected_vertices[i].y = (SCREEN_H / 2) - ((y2 * FOCAL_LENGTH) / camera_z);
-        projected_vertices[i].z = camera_z;
+    const BlockFace *face = &(block_faces[face_index]);
+    WorldFace *world_face = &(world_faces[world_face_count]);
+
+    for (int i = 0; i < 4; i++) {
+        world_face->vertices[i] = get_block_vertex(
+            block_x,
+            block_y,
+            block_z,
+            face->indices[i]
+        );
+    }
+
+    world_face->r = face->r;
+    world_face->g = face->g;
+    world_face->b = face->b;
+
+    world_face_count++;
+}
+
+/*
+ * Build static island geometry once.
+ * This removes the expensive height_map traversal from every frame.
+ */
+static void build_world_faces(void) {
+    world_face_count = 0;
+
+    for (int z = 0; z < CHUNK_D; z++) {
+        for (int x = 0; x < CHUNK_W; x++) {
+            const int height = get_height(x, z);
+
+            if (height <= 0) {
+                continue;
+            }
+
+            for (int y = 0; y < height; y++) {
+                if (y == height - 1) {
+                    push_world_face(x, y, z, FACE_POS_Y);
+                }
+
+                if (y == 0) {
+                    push_world_face(x, y, z, FACE_NEG_Y);
+                }
+
+                if (get_height(x, z - 1) <= y) {
+                    push_world_face(x, y, z, FACE_NEG_Z);
+                }
+
+                if (get_height(x, z + 1) <= y) {
+                    push_world_face(x, y, z, FACE_POS_Z);
+                }
+
+                if (get_height(x - 1, z) <= y) {
+                    push_world_face(x, y, z, FACE_NEG_X);
+                }
+
+                if (get_height(x + 1, z) <= y) {
+                    push_world_face(x, y, z, FACE_POS_X);
+                }
+            }
+        }
     }
 }
 
-static int face_normal_z(const Vec3i vertices[8], const CubeFace *face) {
-    const Vec3i *a = &(vertices[face->a]);
-    const Vec3i *b = &(vertices[face->b]);
-    const Vec3i *c = &(vertices[face->c]);
+static void transform_project_point(
+    const Vec3i *world,
+    Vec3i *camera,
+    ProjectedVertex *projected,
+    int angle_y,
+    int angle_x
+) {
+    const int sin_y = isin(angle_y);
+    const int cos_y = icos(angle_y);
+
+    const int sin_x = isin(angle_x);
+    const int cos_x = icos(angle_x);
+
+    const int x1 = ((world->x * cos_y) + (world->z * sin_y)) / FIXED_ONE;
+    const int z1 = ((-world->x * sin_y) + (world->z * cos_y)) / FIXED_ONE;
+
+    const int y2 = ((world->y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
+    const int z2 = ((world->y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
+
+    const int camera_z = z2 + CAMERA_Z;
+
+    camera->x = x1;
+    camera->y = y2;
+    camera->z = camera_z;
+
+    projected->x = (SCREEN_W / 2) + ((x1 * FOCAL_LENGTH) / camera_z);
+    projected->y = (SCREEN_H / 2) - ((y2 * FOCAL_LENGTH) / camera_z);
+    projected->z = camera_z;
+}
+
+static int face_normal_z(const Vec3i camera_vertices[4]) {
+    const Vec3i *a = &(camera_vertices[0]);
+    const Vec3i *b = &(camera_vertices[1]);
+    const Vec3i *c = &(camera_vertices[2]);
 
     const int ux = b->x - a->x;
     const int uy = b->y - a->y;
@@ -242,55 +366,23 @@ static int face_normal_z(const Vec3i vertices[8], const CubeFace *face) {
     const int vx = c->x - a->x;
     const int vy = c->y - a->y;
 
-    /*
-     * Z component of cross product:
-     * normal.z = ux * vy - uy * vx
-     */
     return (ux * vy) - (uy * vx);
 }
 
-static int face_depth(const Vec3i vertices[8], const CubeFace *face) {
+static int face_depth(const Vec3i camera_vertices[4]) {
     return (
-        vertices[face->a].z +
-        vertices[face->b].z +
-        vertices[face->c].z +
-        vertices[face->d].z
+        camera_vertices[0].z +
+        camera_vertices[1].z +
+        camera_vertices[2].z +
+        camera_vertices[3].z
     ) / 4;
 }
 
-static int collect_visible_faces(
-    const Vec3i camera_vertices[8],
-    FaceToDraw faces_to_draw[6]
-) {
-    int count = 0;
-
-    for (int i = 0; i < 6; i++) {
-        const CubeFace *face = &(cube_faces[i]);
-
-        /*
-         * Camera looks toward +Z.
-         * Visible faces have normals pointing toward -Z.
-         */
-        if (face_normal_z(camera_vertices, face) >= 0) {
-            continue;
-        }
-
-        faces_to_draw[count].face = face;
-        faces_to_draw[count].depth = face_depth(camera_vertices, face);
-        count++;
-    }
-
-    return count;
-}
-
-static void sort_faces_far_to_near(FaceToDraw faces[6], int count) {
+static void sort_faces_far_to_near(RenderFace faces[MAX_RENDER_FACES], int count) {
     for (int i = 0; i < count - 1; i++) {
         for (int j = i + 1; j < count; j++) {
-            /*
-             * Larger Z = farther away from camera.
-             */
             if (faces[j].depth > faces[i].depth) {
-                FaceToDraw tmp = faces[i];
+                RenderFace tmp = faces[i];
                 faces[i] = faces[j];
                 faces[j] = tmp;
             }
@@ -298,12 +390,69 @@ static void sort_faces_far_to_near(FaceToDraw faces[6], int count) {
     }
 }
 
+/*
+ * Rebuild projected/sorted render list.
+ * This is still expensive, so we do NOT do it every frame.
+ */
+static void rebuild_render_cache(int angle_y, int angle_x) {
+    cached_render_face_count = 0;
+
+    for (int face_index = 0; face_index < world_face_count; face_index++) {
+        if (cached_render_face_count >= MAX_RENDER_FACES) {
+            break;
+        }
+
+        const WorldFace *world_face = &(world_faces[face_index]);
+
+        Vec3i camera_vertices[4];
+        ProjectedVertex projected_vertices[4];
+
+        int clipped = 0;
+
+        for (int i = 0; i < 4; i++) {
+            transform_project_point(
+                &(world_face->vertices[i]),
+                &(camera_vertices[i]),
+                &(projected_vertices[i]),
+                angle_y,
+                angle_x
+            );
+
+            if (camera_vertices[i].z <= 32) {
+                clipped = 1;
+            }
+        }
+
+        if (clipped) {
+            continue;
+        }
+
+        if (face_normal_z(camera_vertices) >= 0) {
+            continue;
+        }
+
+        RenderFace *render_face = &(cached_render_faces[cached_render_face_count]);
+
+        for (int i = 0; i < 4; i++) {
+            render_face->vertices[i] = projected_vertices[i];
+        }
+
+        render_face->depth = face_depth(camera_vertices);
+        render_face->r = world_face->r;
+        render_face->g = world_face->g;
+        render_face->b = world_face->b;
+
+        cached_render_face_count++;
+    }
+
+    sort_faces_far_to_near(cached_render_faces, cached_render_face_count);
+}
+
 static void draw_triangle(
     RenderContext *ctx,
-    const ProjectedVertex vertices[8],
-    uint8_t a,
-    uint8_t b,
-    uint8_t c,
+    const ProjectedVertex *a,
+    const ProjectedVertex *b,
+    const ProjectedVertex *c,
     uint8_t r,
     uint8_t g,
     uint8_t b_col,
@@ -316,73 +465,45 @@ static void draw_triangle(
 
     setXY3(
         poly,
-        vertices[a].x, vertices[a].y,
-        vertices[b].x, vertices[b].y,
-        vertices[c].x, vertices[c].y
+        a->x, a->y,
+        b->x, b->y,
+        c->x, c->y
     );
 }
 
-static void draw_face(
-    RenderContext *ctx,
-    const ProjectedVertex vertices[8],
-    const CubeFace *face,
-    int ot_z
-) {
-    /*
-     * Draw each quad face as two triangles.
-     *
-     * This is more reliable than POLY_F4 and is closer to what we will need
-     * for a voxel renderer anyway.
-     */
+static void draw_render_face(RenderContext *ctx, const RenderFace *face, int ot_z) {
     draw_triangle(
         ctx,
-        vertices,
-        face->a,
+        &(face->vertices[0]),
+        &(face->vertices[1]),
+        &(face->vertices[2]),
+        face->r,
+        face->g,
         face->b,
-        face->c,
-        face->r,
-        face->g,
-        face->b_col,
         ot_z
     );
 
     draw_triangle(
         ctx,
-        vertices,
-        face->a,
-        face->c,
-        face->d,
+        &(face->vertices[0]),
+        &(face->vertices[2]),
+        &(face->vertices[3]),
         face->r,
         face->g,
-        face->b_col,
+        face->b,
         ot_z
     );
 }
 
-static void draw_cube(
-    RenderContext *ctx,
-    const Vec3i camera_vertices[8],
-    const ProjectedVertex projected_vertices[8]
-) {
-    FaceToDraw faces_to_draw[6];
+static void draw_cached_chunk(RenderContext *ctx) {
+    for (int i = 0; i < cached_render_face_count; i++) {
+        int ot_z = 1 + (cached_render_face_count - i);
 
-    const int face_count = collect_visible_faces(camera_vertices, faces_to_draw);
-    sort_faces_far_to_near(faces_to_draw, face_count);
+        if (ot_z >= OT_LENGTH) {
+            ot_z = OT_LENGTH - 1;
+        }
 
-    for (int i = 0; i < face_count; i++) {
-        /*
-         * Higher OT index draws earlier.
-         * So farthest face gets the highest slot.
-         * Text stays at z=0 and draws on top.
-         */
-        const int ot_z = 8 + (face_count - 1 - i);
-
-        draw_face(
-            ctx,
-            projected_vertices,
-            faces_to_draw[i].face,
-            ot_z
-        );
+        draw_render_face(ctx, &(cached_render_faces[i]), ot_z);
     }
 }
 
@@ -396,19 +517,27 @@ int main(int argc, const char **argv) {
     RenderContext ctx;
     setup_context(&ctx, SCREEN_W, SCREEN_H, 8, 12, 18);
 
-    int angle = 0;
+    build_world_faces();
+
+    int angle_y = 0;
+    int frame_counter = 0;
+
+    rebuild_render_cache(angle_y, CAMERA_TILT_X);
 
     for (;;) {
-        Vec3i camera_vertices[8];
-        ProjectedVertex projected_vertices[8];
-
-        transform_cube(camera_vertices, projected_vertices, angle);
-        draw_cube(&ctx, camera_vertices, projected_vertices);
+        draw_cached_chunk(&ctx);
 
         draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "solid cube + backface culling");
+        draw_text(&ctx, 8, 32, 0, "cached voxel island");
 
-        angle = (angle + 1) & 63;
+        frame_counter++;
+
+        if (frame_counter >= GEOMETRY_UPDATE_INTERVAL) {
+            frame_counter = 0;
+            angle_y = (angle_y + 1) & 63;
+
+            rebuild_render_cache(angle_y, CAMERA_TILT_X);
+        }
 
         flip_buffers(&ctx);
     }
