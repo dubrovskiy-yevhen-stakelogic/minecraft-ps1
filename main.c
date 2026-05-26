@@ -17,22 +17,22 @@
 #define BLOCK_HALF 24
 #define BLOCK_SIZE (BLOCK_HALF * 2)
 
-#define CHUNK_W 7
-#define CHUNK_D 7
+#define VIEW_RADIUS 8
+#define VIEW_SIZE ((VIEW_RADIUS * 2) + 1)
+#define GRID_VERTICES_PER_SIDE (VIEW_SIZE + 1)
 
 #define FOCAL_LENGTH 220
 #define NEAR_PLANE_Z 24
 
-#define MAX_MESH_VERTICES 512
-#define MAX_MESH_FACES 256
+#define MAX_MESH_VERTICES (GRID_VERTICES_PER_SIDE * GRID_VERTICES_PER_SIDE)
+#define MAX_MESH_FACES (VIEW_SIZE * VIEW_SIZE)
 
 #define ANGLE_FULL 4096
 #define ANGLE_MASK (ANGLE_FULL - 1)
 #define ANGLE_FRAC_BITS 6
 #define ANGLE_QUARTER 1024
 
-#define DEFAULT_CAMERA_Z 680
-#define DEFAULT_CAMERA_PITCH (-180)
+#define DEFAULT_CAMERA_PITCH (-220)
 
 #define CAMERA_PITCH_MIN (-900)
 #define CAMERA_PITCH_MAX 300
@@ -40,16 +40,14 @@
 #define CAMERA_YAW_SPEED 32
 #define CAMERA_PITCH_SPEED 24
 
-#define WALK_MOVE_SPEED 6
-#define WALK_STRAFE_SPEED 6
+#define WALK_MOVE_SPEED 9
+#define WALK_STRAFE_SPEED 9
 
-#define FLY_MOVE_SPEED 12
-#define FLY_STRAFE_SPEED 10
+#define FLY_MOVE_SPEED 14
+#define FLY_STRAFE_SPEED 12
 #define FLY_VERTICAL_SPEED 10
 
-#define PLAYER_EYE_HEIGHT 118
-#define PLAYER_START_X 0
-#define PLAYER_START_Z (-96)
+#define PLAYER_EYE_HEIGHT 72
 
 #define PAD_BUFFER_SIZE 34
 
@@ -86,14 +84,6 @@ typedef struct {
     uint8_t b;
 } MeshFace;
 
-typedef struct {
-    uint8_t indices[4];
-
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-} BlockFace;
-
 static RenderContext ctx;
 
 static Vec3i mesh_vertices[MAX_MESH_VERTICES];
@@ -104,17 +94,20 @@ static MeshFace mesh_faces[MAX_MESH_FACES];
 static int mesh_vertex_count = 0;
 static int mesh_face_count = 0;
 
+static int mesh_center_tile_x = 999999;
+static int mesh_center_tile_z = 999999;
+
 static uint8_t pad_buffers[2][PAD_BUFFER_SIZE];
 
-static int camera_pos_x = PLAYER_START_X;
-static int camera_pos_y = 0;
-static int camera_pos_z = PLAYER_START_Z;
+static int camera_pos_x = 0;
+static int camera_pos_y = PLAYER_EYE_HEIGHT;
+static int camera_pos_z = 0;
 
 static int camera_yaw = 0;
 static int camera_pitch = DEFAULT_CAMERA_PITCH;
 
 /*
- * 0 = walking on the voxel island.
+ * 0 = walk on infinite flat world.
  * 1 = free fly/debug camera.
  */
 static int fly_mode_enabled = 0;
@@ -134,46 +127,6 @@ static const int16_t sin_table[64] = {
     -724, -792, -851, -903, -946, -980, -1004, -1019,
     -1024, -1019, -1004, -980, -946, -903, -851, -792,
     -724, -650, -569, -483, -391, -297, -200, -100
-};
-
-static const uint8_t height_map[CHUNK_D][CHUNK_W] = {
-    { 0, 0, 1, 1, 1, 0, 0 },
-    { 0, 1, 1, 2, 1, 1, 0 },
-    { 1, 1, 2, 3, 2, 1, 1 },
-    { 1, 2, 3, 4, 3, 2, 1 },
-    { 1, 1, 2, 3, 2, 1, 1 },
-    { 0, 1, 1, 2, 1, 1, 0 },
-    { 0, 0, 1, 1, 1, 0, 0 }
-};
-
-enum {
-    FACE_NEG_Z = 0,
-    FACE_POS_Z = 1,
-    FACE_NEG_X = 2,
-    FACE_POS_X = 3,
-    FACE_NEG_Y = 4,
-    FACE_POS_Y = 5
-};
-
-static const Vec3i block_local_vertices[8] = {
-    { -BLOCK_HALF, -BLOCK_HALF, -BLOCK_HALF },
-    {  BLOCK_HALF, -BLOCK_HALF, -BLOCK_HALF },
-    {  BLOCK_HALF,  BLOCK_HALF, -BLOCK_HALF },
-    { -BLOCK_HALF,  BLOCK_HALF, -BLOCK_HALF },
-
-    { -BLOCK_HALF, -BLOCK_HALF,  BLOCK_HALF },
-    {  BLOCK_HALF, -BLOCK_HALF,  BLOCK_HALF },
-    {  BLOCK_HALF,  BLOCK_HALF,  BLOCK_HALF },
-    { -BLOCK_HALF,  BLOCK_HALF,  BLOCK_HALF }
-};
-
-static const BlockFace block_faces[6] = {
-    { { 0, 3, 2, 1 }, 118, 76, 38 },
-    { { 4, 5, 6, 7 }, 95, 60, 32 },
-    { { 0, 4, 7, 3 }, 105, 68, 35 },
-    { { 1, 2, 6, 5 }, 130, 84, 42 },
-    { { 0, 1, 5, 4 }, 55, 38, 24 },
-    { { 3, 7, 6, 2 }, 70, 185, 70 }
 };
 
 static int clamp_int(int value, int min_value, int max_value) {
@@ -204,70 +157,28 @@ static int icos(int angle) {
     return isin(angle + ANGLE_QUARTER);
 }
 
-static int get_origin_x(void) {
-    return -((CHUNK_W - 1) * BLOCK_SIZE) / 2;
-}
-
-static int get_origin_z(void) {
-    return -((CHUNK_D - 1) * BLOCK_SIZE) / 2;
-}
-
-static int get_height(int x, int z) {
-    if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D) {
-        return 0;
+/*
+ * C integer division truncates toward zero.
+ * We need floor division so negative world coordinates map to correct tiles.
+ */
+static int floor_div(int value, int divisor) {
+    if (value >= 0) {
+        return value / divisor;
     }
 
-    return height_map[z][x];
+    return -(((-value) + divisor - 1) / divisor);
 }
 
-static int world_to_column_index(int world_value, int origin, int count) {
-    const int min_value = origin - BLOCK_HALF;
-    const int local = world_value - min_value;
-
-    if (local < 0) {
-        return -1;
-    }
-
-    const int index = local / BLOCK_SIZE;
-
-    if (index < 0 || index >= count) {
-        return -1;
-    }
-
-    return index;
+static int world_to_tile(int value) {
+    return floor_div(value + BLOCK_HALF, BLOCK_SIZE);
 }
 
-static int get_height_at_world_position(int world_x, int world_z) {
-    const int x = world_to_column_index(world_x, get_origin_x(), CHUNK_W);
-    const int z = world_to_column_index(world_z, get_origin_z(), CHUNK_D);
-
-    if (x < 0 || z < 0) {
-        return 0;
-    }
-
-    return get_height(x, z);
+static int tile_to_world_center(int tile) {
+    return tile * BLOCK_SIZE;
 }
 
-static int get_floor_y_for_height(int height) {
-    if (height <= 0) {
-        return -100000;
-    }
-
-    return -95 + ((height - 1) * BLOCK_SIZE) + BLOCK_HALF;
-}
-
-static int is_walk_position_valid(int world_x, int world_z) {
-    return get_height_at_world_position(world_x, world_z) > 0;
-}
-
-static void snap_camera_to_ground(void) {
-    const int height = get_height_at_world_position(camera_pos_x, camera_pos_z);
-
-    if (height <= 0) {
-        return;
-    }
-
-    camera_pos_y = get_floor_y_for_height(height) + PLAYER_EYE_HEIGHT;
+static int grid_vertex_index(int x, int z) {
+    return (z * GRID_VERTICES_PER_SIDE) + x;
 }
 
 static void setup_context(RenderContext *context, int w, int h, int r, int g, int b) {
@@ -363,10 +274,10 @@ static void draw_crosshair(RenderContext *context) {
     const int cx = SCREEN_W / 2;
     const int cy = SCREEN_H / 2;
 
-    draw_line(context, cx - 5, cy, cx - 2, cy, 0, 220, 220, 220);
-    draw_line(context, cx + 2, cy, cx + 5, cy, 0, 220, 220, 220);
-    draw_line(context, cx, cy - 5, cx, cy - 2, 0, 220, 220, 220);
-    draw_line(context, cx, cy + 2, cx, cy + 5, 0, 220, 220, 220);
+    draw_line(context, cx - 5, cy, cx - 2, cy, 0, 235, 235, 235);
+    draw_line(context, cx + 2, cy, cx + 5, cy, 0, 235, 235, 235);
+    draw_line(context, cx, cy - 5, cx, cy - 2, 0, 235, 235, 235);
+    draw_line(context, cx, cy + 2, cx, cy + 5, 0, 235, 235, 235);
 }
 
 static void init_input(void) {
@@ -407,26 +318,15 @@ static uint16_t read_pad_buttons(void) {
 static void reset_camera(void) {
     fly_mode_enabled = 0;
 
-    camera_pos_x = PLAYER_START_X;
-    camera_pos_z = PLAYER_START_Z;
+    camera_pos_x = 0;
+    camera_pos_y = PLAYER_EYE_HEIGHT;
+    camera_pos_z = 0;
+
     camera_yaw = 0;
     camera_pitch = DEFAULT_CAMERA_PITCH;
 
-    snap_camera_to_ground();
-}
-
-static void try_walk_move(int delta_x, int delta_z) {
-    const int next_x = camera_pos_x + delta_x;
-    const int next_z = camera_pos_z + delta_z;
-
-    if (!is_walk_position_valid(next_x, next_z)) {
-        return;
-    }
-
-    camera_pos_x = next_x;
-    camera_pos_z = next_z;
-
-    snap_camera_to_ground();
+    mesh_center_tile_x = 999999;
+    mesh_center_tile_z = 999999;
 }
 
 static void update_input(void) {
@@ -449,12 +349,7 @@ static void update_input(void) {
         fly_mode_enabled = !fly_mode_enabled;
 
         if (!fly_mode_enabled) {
-            if (!is_walk_position_valid(camera_pos_x, camera_pos_z)) {
-                camera_pos_x = PLAYER_START_X;
-                camera_pos_z = PLAYER_START_Z;
-            }
-
-            snap_camera_to_ground();
+            camera_pos_y = PLAYER_EYE_HEIGHT;
         }
     }
 
@@ -510,134 +405,105 @@ static void update_input(void) {
         }
     } else {
         if (buttons & PAD_UP) {
-            try_walk_move(
-                (forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
-                (forward_z * WALK_MOVE_SPEED) / FIXED_ONE
-            );
+            camera_pos_x += (forward_x * WALK_MOVE_SPEED) / FIXED_ONE;
+            camera_pos_z += (forward_z * WALK_MOVE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_DOWN) {
-            try_walk_move(
-                -(forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
-                -(forward_z * WALK_MOVE_SPEED) / FIXED_ONE
-            );
+            camera_pos_x -= (forward_x * WALK_MOVE_SPEED) / FIXED_ONE;
+            camera_pos_z -= (forward_z * WALK_MOVE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_L1) {
-            try_walk_move(
-                -(right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
-                -(right_z * WALK_STRAFE_SPEED) / FIXED_ONE
-            );
+            camera_pos_x -= (right_x * WALK_STRAFE_SPEED) / FIXED_ONE;
+            camera_pos_z -= (right_z * WALK_STRAFE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_R1) {
-            try_walk_move(
-                (right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
-                (right_z * WALK_STRAFE_SPEED) / FIXED_ONE
-            );
+            camera_pos_x += (right_x * WALK_STRAFE_SPEED) / FIXED_ONE;
+            camera_pos_z += (right_z * WALK_STRAFE_SPEED) / FIXED_ONE;
         }
 
-        snap_camera_to_ground();
+        /*
+         * Flat infinite ground.
+         */
+        camera_pos_y = PLAYER_EYE_HEIGHT;
     }
 
     previous_buttons = buttons;
 }
 
-static Vec3i get_block_vertex(int block_x, int block_y, int block_z, uint8_t vertex_index) {
-    Vec3i result;
+/*
+ * Optimized mesh rebuild:
+ * Previous version used add_mesh_vertex() with an O(n) duplicate search.
+ * That caused a huge spike every time the camera crossed into a new tile.
+ *
+ * This version knows the flat grid topology:
+ * - vertices are a fixed (VIEW_SIZE + 1) x (VIEW_SIZE + 1) grid
+ * - faces directly index those vertices
+ * So rebuild is simple O(n), no duplicate search.
+ */
+static void build_flat_world_mesh(int center_tile_x, int center_tile_z) {
+    const int start_tile_x = center_tile_x - VIEW_RADIUS;
+    const int start_tile_z = center_tile_z - VIEW_RADIUS;
 
-    result.x = get_origin_x() + (block_x * BLOCK_SIZE) + block_local_vertices[vertex_index].x;
-    result.y = -95 + (block_y * BLOCK_SIZE) + block_local_vertices[vertex_index].y;
-    result.z = get_origin_z() + (block_z * BLOCK_SIZE) + block_local_vertices[vertex_index].z;
+    const int start_world_x = tile_to_world_center(start_tile_x) - BLOCK_HALF;
+    const int start_world_z = tile_to_world_center(start_tile_z) - BLOCK_HALF;
 
-    return result;
-}
-
-static int add_mesh_vertex(Vec3i vertex) {
-    for (int i = 0; i < mesh_vertex_count; i++) {
-        if (
-            mesh_vertices[i].x == vertex.x &&
-            mesh_vertices[i].y == vertex.y &&
-            mesh_vertices[i].z == vertex.z
-        ) {
-            return i;
-        }
-    }
-
-    if (mesh_vertex_count >= MAX_MESH_VERTICES) {
-        return 0;
-    }
-
-    mesh_vertices[mesh_vertex_count] = vertex;
-    mesh_vertex_count++;
-
-    return mesh_vertex_count - 1;
-}
-
-static void push_mesh_face(int block_x, int block_y, int block_z, int face_index) {
-    if (mesh_face_count >= MAX_MESH_FACES) {
-        return;
-    }
-
-    const BlockFace *block_face = &(block_faces[face_index]);
-    MeshFace *mesh_face = &(mesh_faces[mesh_face_count]);
-
-    for (int i = 0; i < 4; i++) {
-        const Vec3i vertex = get_block_vertex(
-            block_x,
-            block_y,
-            block_z,
-            block_face->indices[i]
-        );
-
-        mesh_face->v[i] = (uint16_t)add_mesh_vertex(vertex);
-    }
-
-    mesh_face->r = block_face->r;
-    mesh_face->g = block_face->g;
-    mesh_face->b = block_face->b;
-
-    mesh_face_count++;
-}
-
-static void build_mesh(void) {
     mesh_vertex_count = 0;
     mesh_face_count = 0;
 
-    for (int z = 0; z < CHUNK_D; z++) {
-        for (int x = 0; x < CHUNK_W; x++) {
-            const int height = get_height(x, z);
+    for (int z = 0; z < GRID_VERTICES_PER_SIDE; z++) {
+        for (int x = 0; x < GRID_VERTICES_PER_SIDE; x++) {
+            Vec3i *vertex = &(mesh_vertices[mesh_vertex_count]);
 
-            if (height <= 0) {
-                continue;
-            }
+            vertex->x = start_world_x + (x * BLOCK_SIZE);
+            vertex->y = 0;
+            vertex->z = start_world_z + (z * BLOCK_SIZE);
 
-            for (int y = 0; y < height; y++) {
-                if (y == height - 1) {
-                    push_mesh_face(x, y, z, FACE_POS_Y);
-                }
-
-                if (y == 0) {
-                    push_mesh_face(x, y, z, FACE_NEG_Y);
-                }
-
-                if (get_height(x, z - 1) <= y) {
-                    push_mesh_face(x, y, z, FACE_NEG_Z);
-                }
-
-                if (get_height(x, z + 1) <= y) {
-                    push_mesh_face(x, y, z, FACE_POS_Z);
-                }
-
-                if (get_height(x - 1, z) <= y) {
-                    push_mesh_face(x, y, z, FACE_NEG_X);
-                }
-
-                if (get_height(x + 1, z) <= y) {
-                    push_mesh_face(x, y, z, FACE_POS_X);
-                }
-            }
+            mesh_vertex_count++;
         }
+    }
+
+    for (int z = 0; z < VIEW_SIZE; z++) {
+        for (int x = 0; x < VIEW_SIZE; x++) {
+            MeshFace *face = &(mesh_faces[mesh_face_count]);
+
+            face->v[0] = (uint16_t)grid_vertex_index(x, z);
+            face->v[1] = (uint16_t)grid_vertex_index(x + 1, z);
+            face->v[2] = (uint16_t)grid_vertex_index(x + 1, z + 1);
+            face->v[3] = (uint16_t)grid_vertex_index(x, z + 1);
+
+            /*
+             * Subtle checker pattern so movement is visible.
+             */
+            if (((start_tile_x + x) ^ (start_tile_z + z)) & 1) {
+                face->r = 54;
+                face->g = 155;
+                face->b = 54;
+            } else {
+                face->r = 64;
+                face->g = 175;
+                face->b = 64;
+            }
+
+            mesh_face_count++;
+        }
+    }
+
+    mesh_center_tile_x = center_tile_x;
+    mesh_center_tile_z = center_tile_z;
+}
+
+static void rebuild_mesh_if_needed(void) {
+    const int center_tile_x = world_to_tile(camera_pos_x);
+    const int center_tile_z = world_to_tile(camera_pos_z);
+
+    if (
+        center_tile_x != mesh_center_tile_x ||
+        center_tile_z != mesh_center_tile_z
+    ) {
+        build_flat_world_mesh(center_tile_x, center_tile_z);
     }
 }
 
@@ -665,20 +531,6 @@ static void transform_all_vertices(void) {
         camera_vertices[i].y = y2;
         camera_vertices[i].z = z2;
     }
-}
-
-static int face_normal_z(const MeshFace *face) {
-    const Vec3i *a = &(camera_vertices[face->v[0]]);
-    const Vec3i *b = &(camera_vertices[face->v[1]]);
-    const Vec3i *c = &(camera_vertices[face->v[2]]);
-
-    const int ux = b->x - a->x;
-    const int uy = b->y - a->y;
-
-    const int vx = c->x - a->x;
-    const int vy = c->y - a->y;
-
-    return (ux * vy) - (uy * vx);
 }
 
 static int depth_to_ot(int depth) {
@@ -848,10 +700,6 @@ static void draw_mesh(RenderContext *context) {
     for (int i = 0; i < mesh_face_count; i++) {
         const MeshFace *face = &(mesh_faces[i]);
 
-        if (face_normal_z(face) >= 0) {
-            continue;
-        }
-
         const Vec3i *v0 = &(camera_vertices[face->v[0]]);
         const Vec3i *v1 = &(camera_vertices[face->v[1]]);
         const Vec3i *v2 = &(camera_vertices[face->v[2]]);
@@ -869,30 +717,34 @@ int main(int argc, const char **argv) {
     ResetGraph(0);
     FntLoad(960, 0);
 
-    setup_context(&ctx, SCREEN_W, SCREEN_H, 8, 12, 18);
+    /*
+     * Sky-ish background.
+     */
+    setup_context(&ctx, SCREEN_W, SCREEN_H, 48, 80, 130);
     init_input();
 
-    build_mesh();
     reset_camera();
 
     for (;;) {
         update_input();
 
+        rebuild_mesh_if_needed();
         transform_all_vertices();
         draw_mesh(&ctx);
         draw_crosshair(&ctx);
 
         draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "NEAR-PLANE CLIPPING");
+        draw_text(&ctx, 8, 32, 0, "INFINITE FLAT WORLD");
+        draw_text(&ctx, 8, 48, 0, "OPTIMIZED GRID MESH");
 
         if (fly_mode_enabled) {
-            draw_text(&ctx, 8, 48, 0, "MODE: FLY  START WALK");
-            draw_text(&ctx, 8, 64, 0, "DPAD MOVE/TURN L1/R1 STRAFE");
-            draw_text(&ctx, 8, 80, 0, "TRI/CROSS PITCH L2/R2 HEIGHT");
+            draw_text(&ctx, 8, 64, 0, "MODE: FLY  START WALK");
+            draw_text(&ctx, 8, 80, 0, "DPAD MOVE/TURN L1/R1 STRAFE");
+            draw_text(&ctx, 8, 96, 0, "TRI/CROSS PITCH L2/R2 HEIGHT");
         } else {
-            draw_text(&ctx, 8, 48, 0, "MODE: WALK  START FLY");
-            draw_text(&ctx, 8, 64, 0, "DPAD WALK/TURN L1/R1 STRAFE");
-            draw_text(&ctx, 8, 80, 0, "TRI/CROSS PITCH SELECT RESET");
+            draw_text(&ctx, 8, 64, 0, "MODE: WALK  START FLY");
+            draw_text(&ctx, 8, 80, 0, "DPAD WALK/TURN L1/R1 STRAFE");
+            draw_text(&ctx, 8, 96, 0, "TRI/CROSS PITCH SELECT RESET");
         }
 
         flip_buffers(&ctx);
