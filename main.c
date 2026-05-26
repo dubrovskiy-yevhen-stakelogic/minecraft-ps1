@@ -2,7 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <psxapi.h>
 #include <psxgpu.h>
+#include <psxpad.h>
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -18,8 +20,12 @@
 #define CHUNK_W 7
 #define CHUNK_D 7
 
-#define CAMERA_Z 680
+#define DEFAULT_CAMERA_Z 680
 #define FOCAL_LENGTH 220
+
+#define CAMERA_Z_MIN 420
+#define CAMERA_Z_MAX 1100
+#define CAMERA_ZOOM_SPEED 16
 
 #define MAX_MESH_VERTICES 512
 #define MAX_MESH_FACES 256
@@ -29,8 +35,15 @@
 #define ANGLE_FRAC_BITS 6
 #define ANGLE_QUARTER 1024
 
-#define CAMERA_TILT_X (-448)
+#define DEFAULT_CAMERA_TILT_X (-448)
+#define CAMERA_TILT_MIN (-900)
+#define CAMERA_TILT_MAX 200
+
 #define ROTATION_SPEED 8
+#define MANUAL_ROTATION_SPEED 32
+#define MANUAL_TILT_SPEED 24
+
+#define PAD_BUFFER_SIZE 34
 
 typedef struct {
     DISPENV disp_env;
@@ -83,6 +96,13 @@ static MeshFace mesh_faces[MAX_MESH_FACES];
 
 static int mesh_vertex_count = 0;
 static int mesh_face_count = 0;
+
+static uint8_t pad_buffers[2][PAD_BUFFER_SIZE];
+
+static int camera_angle_y = 0;
+static int camera_tilt_x = DEFAULT_CAMERA_TILT_X;
+static int camera_distance = DEFAULT_CAMERA_Z;
+static int auto_rotate_enabled = 1;
 
 /*
  * 64-step sine table.
@@ -140,6 +160,18 @@ static const BlockFace block_faces[6] = {
     { { 0, 1, 5, 4 }, 55, 38, 24 },
     { { 3, 7, 6, 2 }, 70, 185, 70 }
 };
+
+static int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+
+    if (value > max_value) {
+        return max_value;
+    }
+
+    return value;
+}
 
 static int isin(int angle) {
     angle &= ANGLE_MASK;
@@ -226,6 +258,109 @@ static void draw_text(RenderContext *context, int x, int y, int z, const char *t
     );
 
     assert(context->next_packet <= &(buffer->buffer[BUFFER_LENGTH]));
+}
+
+static void init_input(void) {
+    InitPAD(
+        pad_buffers[0],
+        PAD_BUFFER_SIZE,
+        pad_buffers[1],
+        PAD_BUFFER_SIZE
+    );
+
+    StartPAD();
+    ChangeClearPAD(1);
+}
+
+static uint16_t read_pad_buttons(void) {
+    PADTYPE *pad = (PADTYPE *)pad_buffers[0];
+
+    if (pad->stat != 0) {
+        return 0;
+    }
+
+    if (
+        pad->type != PAD_ID_DIGITAL &&
+        pad->type != PAD_ID_ANALOG_STICK &&
+        pad->type != PAD_ID_ANALOG
+    ) {
+        return 0;
+    }
+
+    /*
+     * PS1 pad buttons are active-low:
+     * bit = 0 means pressed.
+     * Invert it so pressed buttons become 1.
+     */
+    return (uint16_t)(~pad->btn);
+}
+
+static void reset_camera(void) {
+    camera_angle_y = 0;
+    camera_tilt_x = DEFAULT_CAMERA_TILT_X;
+    camera_distance = DEFAULT_CAMERA_Z;
+    auto_rotate_enabled = 1;
+}
+
+static void update_input(void) {
+    static uint16_t previous_buttons = 0;
+
+    const uint16_t buttons = read_pad_buttons();
+    const uint16_t pressed_this_frame = buttons & ~previous_buttons;
+
+    if (pressed_this_frame & PAD_START) {
+        auto_rotate_enabled = !auto_rotate_enabled;
+    }
+
+    if (pressed_this_frame & PAD_SELECT) {
+        reset_camera();
+    }
+
+    if (buttons & PAD_LEFT) {
+        camera_angle_y = (camera_angle_y - MANUAL_ROTATION_SPEED) & ANGLE_MASK;
+        auto_rotate_enabled = 0;
+    }
+
+    if (buttons & PAD_RIGHT) {
+        camera_angle_y = (camera_angle_y + MANUAL_ROTATION_SPEED) & ANGLE_MASK;
+        auto_rotate_enabled = 0;
+    }
+
+    if (buttons & PAD_UP) {
+        camera_tilt_x -= MANUAL_TILT_SPEED;
+        auto_rotate_enabled = 0;
+    }
+
+    if (buttons & PAD_DOWN) {
+        camera_tilt_x += MANUAL_TILT_SPEED;
+        auto_rotate_enabled = 0;
+    }
+
+    if (buttons & PAD_L1) {
+        camera_distance -= CAMERA_ZOOM_SPEED;
+    }
+
+    if (buttons & PAD_R1) {
+        camera_distance += CAMERA_ZOOM_SPEED;
+    }
+
+    camera_tilt_x = clamp_int(
+        camera_tilt_x,
+        CAMERA_TILT_MIN,
+        CAMERA_TILT_MAX
+    );
+
+    camera_distance = clamp_int(
+        camera_distance,
+        CAMERA_Z_MIN,
+        CAMERA_Z_MAX
+    );
+
+    if (auto_rotate_enabled) {
+        camera_angle_y = (camera_angle_y + ROTATION_SPEED) & ANGLE_MASK;
+    }
+
+    previous_buttons = buttons;
 }
 
 static int get_height(int x, int z) {
@@ -353,7 +488,7 @@ static void transform_all_vertices(int angle_y, int angle_x) {
         const int y2 = ((world->y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
         const int z2 = ((world->y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
 
-        const int camera_z = z2 + CAMERA_Z;
+        const int camera_z = z2 + camera_distance;
 
         camera_vertices[i].x = x1;
         camera_vertices[i].y = y2;
@@ -466,19 +601,19 @@ int main(int argc, const char **argv) {
     FntLoad(960, 0);
 
     setup_context(&ctx, SCREEN_W, SCREEN_H, 8, 12, 18);
+    init_input();
 
     build_mesh();
 
-    int angle_y = 0;
-
     for (;;) {
-        transform_all_vertices(angle_y, CAMERA_TILT_X);
+        update_input();
+
+        transform_all_vertices(camera_angle_y, camera_tilt_x);
         draw_mesh(&ctx);
 
         draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "smooth mesh renderer");
-
-        angle_y = (angle_y + ROTATION_SPEED) & ANGLE_MASK;
+        draw_text(&ctx, 8, 32, 0, "DPAD ROT/TILT  L1/R1 ZOOM");
+        draw_text(&ctx, 8, 48, 0, "START AUTO  SELECT RESET");
 
         flip_buffers(&ctx);
     }
