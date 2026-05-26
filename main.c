@@ -20,12 +20,8 @@
 #define CHUNK_W 7
 #define CHUNK_D 7
 
-#define DEFAULT_CAMERA_Z 680
 #define FOCAL_LENGTH 220
-
-#define CAMERA_Z_MIN 420
-#define CAMERA_Z_MAX 1100
-#define CAMERA_ZOOM_SPEED 16
+#define NEAR_PLANE_Z 24
 
 #define MAX_MESH_VERTICES 512
 #define MAX_MESH_FACES 256
@@ -35,13 +31,25 @@
 #define ANGLE_FRAC_BITS 6
 #define ANGLE_QUARTER 1024
 
-#define DEFAULT_CAMERA_TILT_X (-448)
-#define CAMERA_TILT_MIN (-900)
-#define CAMERA_TILT_MAX 200
+#define DEFAULT_CAMERA_Z 680
+#define DEFAULT_CAMERA_PITCH (-180)
 
-#define ROTATION_SPEED 8
-#define MANUAL_ROTATION_SPEED 32
-#define MANUAL_TILT_SPEED 24
+#define CAMERA_PITCH_MIN (-900)
+#define CAMERA_PITCH_MAX 300
+
+#define CAMERA_YAW_SPEED 32
+#define CAMERA_PITCH_SPEED 24
+
+#define WALK_MOVE_SPEED 6
+#define WALK_STRAFE_SPEED 6
+
+#define FLY_MOVE_SPEED 12
+#define FLY_STRAFE_SPEED 10
+#define FLY_VERTICAL_SPEED 10
+
+#define PLAYER_EYE_HEIGHT 118
+#define PLAYER_START_X 0
+#define PLAYER_START_Z (-96)
 
 #define PAD_BUFFER_SIZE 34
 
@@ -90,7 +98,6 @@ static RenderContext ctx;
 
 static Vec3i mesh_vertices[MAX_MESH_VERTICES];
 static Vec3i camera_vertices[MAX_MESH_VERTICES];
-static ProjectedVertex projected_vertices[MAX_MESH_VERTICES];
 
 static MeshFace mesh_faces[MAX_MESH_FACES];
 
@@ -99,10 +106,18 @@ static int mesh_face_count = 0;
 
 static uint8_t pad_buffers[2][PAD_BUFFER_SIZE];
 
-static int camera_angle_y = 0;
-static int camera_tilt_x = DEFAULT_CAMERA_TILT_X;
-static int camera_distance = DEFAULT_CAMERA_Z;
-static int auto_rotate_enabled = 1;
+static int camera_pos_x = PLAYER_START_X;
+static int camera_pos_y = 0;
+static int camera_pos_z = PLAYER_START_Z;
+
+static int camera_yaw = 0;
+static int camera_pitch = DEFAULT_CAMERA_PITCH;
+
+/*
+ * 0 = walking on the voxel island.
+ * 1 = free fly/debug camera.
+ */
+static int fly_mode_enabled = 0;
 
 /*
  * 64-step sine table.
@@ -189,6 +204,72 @@ static int icos(int angle) {
     return isin(angle + ANGLE_QUARTER);
 }
 
+static int get_origin_x(void) {
+    return -((CHUNK_W - 1) * BLOCK_SIZE) / 2;
+}
+
+static int get_origin_z(void) {
+    return -((CHUNK_D - 1) * BLOCK_SIZE) / 2;
+}
+
+static int get_height(int x, int z) {
+    if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D) {
+        return 0;
+    }
+
+    return height_map[z][x];
+}
+
+static int world_to_column_index(int world_value, int origin, int count) {
+    const int min_value = origin - BLOCK_HALF;
+    const int local = world_value - min_value;
+
+    if (local < 0) {
+        return -1;
+    }
+
+    const int index = local / BLOCK_SIZE;
+
+    if (index < 0 || index >= count) {
+        return -1;
+    }
+
+    return index;
+}
+
+static int get_height_at_world_position(int world_x, int world_z) {
+    const int x = world_to_column_index(world_x, get_origin_x(), CHUNK_W);
+    const int z = world_to_column_index(world_z, get_origin_z(), CHUNK_D);
+
+    if (x < 0 || z < 0) {
+        return 0;
+    }
+
+    return get_height(x, z);
+}
+
+static int get_floor_y_for_height(int height) {
+    if (height <= 0) {
+        return -100000;
+    }
+
+    return -95 + ((height - 1) * BLOCK_SIZE) + BLOCK_HALF;
+}
+
+static int is_walk_position_valid(int world_x, int world_z) {
+    return get_height_at_world_position(world_x, world_z) > 0;
+}
+
+static void snap_camera_to_ground(void) {
+    const int height = get_height_at_world_position(camera_pos_x, camera_pos_z);
+
+    if (height <= 0) {
+        return;
+    }
+
+    camera_pos_y = get_floor_y_for_height(height) + PLAYER_EYE_HEIGHT;
+}
+
 static void setup_context(RenderContext *context, int w, int h, int r, int g, int b) {
     SetDefDrawEnv(&(context->buffers[0].draw_env), 0, 0, w, h);
     SetDefDispEnv(&(context->buffers[0].disp_env), 0, 0, w, h);
@@ -260,6 +341,34 @@ static void draw_text(RenderContext *context, int x, int y, int z, const char *t
     assert(context->next_packet <= &(buffer->buffer[BUFFER_LENGTH]));
 }
 
+static void draw_line(
+    RenderContext *context,
+    int x0,
+    int y0,
+    int x1,
+    int y1,
+    int z,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    LINE_F2 *line = (LINE_F2 *)new_primitive(context, z, sizeof(LINE_F2));
+
+    setLineF2(line);
+    setRGB0(line, r, g, b);
+    setXY2(line, x0, y0, x1, y1);
+}
+
+static void draw_crosshair(RenderContext *context) {
+    const int cx = SCREEN_W / 2;
+    const int cy = SCREEN_H / 2;
+
+    draw_line(context, cx - 5, cy, cx - 2, cy, 0, 220, 220, 220);
+    draw_line(context, cx + 2, cy, cx + 5, cy, 0, 220, 220, 220);
+    draw_line(context, cx, cy - 5, cx, cy - 2, 0, 220, 220, 220);
+    draw_line(context, cx, cy + 2, cx, cy + 5, 0, 220, 220, 220);
+}
+
 static void init_input(void) {
     InitPAD(
         pad_buffers[0],
@@ -296,10 +405,28 @@ static uint16_t read_pad_buttons(void) {
 }
 
 static void reset_camera(void) {
-    camera_angle_y = 0;
-    camera_tilt_x = DEFAULT_CAMERA_TILT_X;
-    camera_distance = DEFAULT_CAMERA_Z;
-    auto_rotate_enabled = 1;
+    fly_mode_enabled = 0;
+
+    camera_pos_x = PLAYER_START_X;
+    camera_pos_z = PLAYER_START_Z;
+    camera_yaw = 0;
+    camera_pitch = DEFAULT_CAMERA_PITCH;
+
+    snap_camera_to_ground();
+}
+
+static void try_walk_move(int delta_x, int delta_z) {
+    const int next_x = camera_pos_x + delta_x;
+    const int next_z = camera_pos_z + delta_z;
+
+    if (!is_walk_position_valid(next_x, next_z)) {
+        return;
+    }
+
+    camera_pos_x = next_x;
+    camera_pos_z = next_z;
+
+    snap_camera_to_ground();
 }
 
 static void update_input(void) {
@@ -308,78 +435,120 @@ static void update_input(void) {
     const uint16_t buttons = read_pad_buttons();
     const uint16_t pressed_this_frame = buttons & ~previous_buttons;
 
-    if (pressed_this_frame & PAD_START) {
-        auto_rotate_enabled = !auto_rotate_enabled;
-    }
+    const int forward_x = isin(camera_yaw);
+    const int forward_z = icos(camera_yaw);
+
+    const int right_x = icos(camera_yaw);
+    const int right_z = -isin(camera_yaw);
 
     if (pressed_this_frame & PAD_SELECT) {
         reset_camera();
     }
 
+    if (pressed_this_frame & PAD_START) {
+        fly_mode_enabled = !fly_mode_enabled;
+
+        if (!fly_mode_enabled) {
+            if (!is_walk_position_valid(camera_pos_x, camera_pos_z)) {
+                camera_pos_x = PLAYER_START_X;
+                camera_pos_z = PLAYER_START_Z;
+            }
+
+            snap_camera_to_ground();
+        }
+    }
+
     if (buttons & PAD_LEFT) {
-        camera_angle_y = (camera_angle_y - MANUAL_ROTATION_SPEED) & ANGLE_MASK;
-        auto_rotate_enabled = 0;
+        camera_yaw = (camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
     }
 
     if (buttons & PAD_RIGHT) {
-        camera_angle_y = (camera_angle_y + MANUAL_ROTATION_SPEED) & ANGLE_MASK;
-        auto_rotate_enabled = 0;
+        camera_yaw = (camera_yaw + CAMERA_YAW_SPEED) & ANGLE_MASK;
     }
 
-    if (buttons & PAD_UP) {
-        camera_tilt_x -= MANUAL_TILT_SPEED;
-        auto_rotate_enabled = 0;
+    if (buttons & PAD_TRIANGLE) {
+        camera_pitch -= CAMERA_PITCH_SPEED;
     }
 
-    if (buttons & PAD_DOWN) {
-        camera_tilt_x += MANUAL_TILT_SPEED;
-        auto_rotate_enabled = 0;
+    if (buttons & PAD_CROSS) {
+        camera_pitch += CAMERA_PITCH_SPEED;
     }
 
-    if (buttons & PAD_L1) {
-        camera_distance -= CAMERA_ZOOM_SPEED;
-    }
-
-    if (buttons & PAD_R1) {
-        camera_distance += CAMERA_ZOOM_SPEED;
-    }
-
-    camera_tilt_x = clamp_int(
-        camera_tilt_x,
-        CAMERA_TILT_MIN,
-        CAMERA_TILT_MAX
+    camera_pitch = clamp_int(
+        camera_pitch,
+        CAMERA_PITCH_MIN,
+        CAMERA_PITCH_MAX
     );
 
-    camera_distance = clamp_int(
-        camera_distance,
-        CAMERA_Z_MIN,
-        CAMERA_Z_MAX
-    );
+    if (fly_mode_enabled) {
+        if (buttons & PAD_UP) {
+            camera_pos_x += (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
+            camera_pos_z += (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+        }
 
-    if (auto_rotate_enabled) {
-        camera_angle_y = (camera_angle_y + ROTATION_SPEED) & ANGLE_MASK;
+        if (buttons & PAD_DOWN) {
+            camera_pos_x -= (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
+            camera_pos_z -= (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+        }
+
+        if (buttons & PAD_L1) {
+            camera_pos_x -= (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
+            camera_pos_z -= (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+        }
+
+        if (buttons & PAD_R1) {
+            camera_pos_x += (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
+            camera_pos_z += (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+        }
+
+        if (buttons & PAD_L2) {
+            camera_pos_y += FLY_VERTICAL_SPEED;
+        }
+
+        if (buttons & PAD_R2) {
+            camera_pos_y -= FLY_VERTICAL_SPEED;
+        }
+    } else {
+        if (buttons & PAD_UP) {
+            try_walk_move(
+                (forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
+                (forward_z * WALK_MOVE_SPEED) / FIXED_ONE
+            );
+        }
+
+        if (buttons & PAD_DOWN) {
+            try_walk_move(
+                -(forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
+                -(forward_z * WALK_MOVE_SPEED) / FIXED_ONE
+            );
+        }
+
+        if (buttons & PAD_L1) {
+            try_walk_move(
+                -(right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
+                -(right_z * WALK_STRAFE_SPEED) / FIXED_ONE
+            );
+        }
+
+        if (buttons & PAD_R1) {
+            try_walk_move(
+                (right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
+                (right_z * WALK_STRAFE_SPEED) / FIXED_ONE
+            );
+        }
+
+        snap_camera_to_ground();
     }
 
     previous_buttons = buttons;
 }
 
-static int get_height(int x, int z) {
-    if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D) {
-        return 0;
-    }
-
-    return height_map[z][x];
-}
-
 static Vec3i get_block_vertex(int block_x, int block_y, int block_z, uint8_t vertex_index) {
-    const int origin_x = -((CHUNK_W - 1) * BLOCK_SIZE) / 2;
-    const int origin_z = -((CHUNK_D - 1) * BLOCK_SIZE) / 2;
-
     Vec3i result;
 
-    result.x = origin_x + (block_x * BLOCK_SIZE) + block_local_vertices[vertex_index].x;
+    result.x = get_origin_x() + (block_x * BLOCK_SIZE) + block_local_vertices[vertex_index].x;
     result.y = -95 + (block_y * BLOCK_SIZE) + block_local_vertices[vertex_index].y;
-    result.z = origin_z + (block_z * BLOCK_SIZE) + block_local_vertices[vertex_index].z;
+    result.z = get_origin_z() + (block_z * BLOCK_SIZE) + block_local_vertices[vertex_index].z;
 
     return result;
 }
@@ -472,31 +641,29 @@ static void build_mesh(void) {
     }
 }
 
-static void transform_all_vertices(int angle_y, int angle_x) {
-    const int sin_y = isin(angle_y);
-    const int cos_y = icos(angle_y);
+static void transform_all_vertices(void) {
+    const int sin_y = isin(-camera_yaw);
+    const int cos_y = icos(-camera_yaw);
 
-    const int sin_x = isin(angle_x);
-    const int cos_x = icos(angle_x);
+    const int sin_x = isin(camera_pitch);
+    const int cos_x = icos(camera_pitch);
 
     for (int i = 0; i < mesh_vertex_count; i++) {
         const Vec3i *world = &(mesh_vertices[i]);
 
-        const int x1 = ((world->x * cos_y) + (world->z * sin_y)) / FIXED_ONE;
-        const int z1 = ((-world->x * sin_y) + (world->z * cos_y)) / FIXED_ONE;
+        const int rel_x = world->x - camera_pos_x;
+        const int rel_y = world->y - camera_pos_y;
+        const int rel_z = world->z - camera_pos_z;
 
-        const int y2 = ((world->y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
-        const int z2 = ((world->y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
+        const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
+        const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;
 
-        const int camera_z = z2 + camera_distance;
+        const int y2 = ((rel_y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
+        const int z2 = ((rel_y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
 
         camera_vertices[i].x = x1;
         camera_vertices[i].y = y2;
-        camera_vertices[i].z = camera_z;
-
-        projected_vertices[i].x = (SCREEN_W / 2) + ((x1 * FOCAL_LENGTH) / camera_z);
-        projected_vertices[i].y = (SCREEN_H / 2) - ((y2 * FOCAL_LENGTH) / camera_z);
-        projected_vertices[i].z = camera_z;
+        camera_vertices[i].z = z2;
     }
 }
 
@@ -514,15 +681,6 @@ static int face_normal_z(const MeshFace *face) {
     return (ux * vy) - (uy * vx);
 }
 
-static int face_depth(const MeshFace *face) {
-    return (
-        camera_vertices[face->v[0]].z +
-        camera_vertices[face->v[1]].z +
-        camera_vertices[face->v[2]].z +
-        camera_vertices[face->v[3]].z
-    ) / 4;
-}
-
 static int depth_to_ot(int depth) {
     int ot_z = depth / 4;
 
@@ -537,7 +695,69 @@ static int depth_to_ot(int depth) {
     return ot_z;
 }
 
-static void draw_triangle(
+static Vec3i intersect_near_plane(const Vec3i *a, const Vec3i *b) {
+    Vec3i result;
+
+    const int dz = b->z - a->z;
+    const int t_num = NEAR_PLANE_Z - a->z;
+
+    if (dz == 0) {
+        result = *a;
+        result.z = NEAR_PLANE_Z;
+        return result;
+    }
+
+    result.x = a->x + (((b->x - a->x) * t_num) / dz);
+    result.y = a->y + (((b->y - a->y) * t_num) / dz);
+    result.z = NEAR_PLANE_Z;
+
+    return result;
+}
+
+static int clip_triangle_to_near_plane(const Vec3i input[3], Vec3i output[4]) {
+    int output_count = 0;
+
+    Vec3i previous = input[2];
+    int previous_inside = previous.z >= NEAR_PLANE_Z;
+
+    for (int i = 0; i < 3; i++) {
+        const Vec3i current = input[i];
+        const int current_inside = current.z >= NEAR_PLANE_Z;
+
+        if (current_inside) {
+            if (!previous_inside) {
+                output[output_count++] = intersect_near_plane(&previous, &current);
+            }
+
+            output[output_count++] = current;
+        } else if (previous_inside) {
+            output[output_count++] = intersect_near_plane(&previous, &current);
+        }
+
+        previous = current;
+        previous_inside = current_inside;
+    }
+
+    return output_count;
+}
+
+static void project_camera_vertex(const Vec3i *camera, ProjectedVertex *projected) {
+    int z = camera->z;
+
+    if (z < NEAR_PLANE_Z) {
+        z = NEAR_PLANE_Z;
+    }
+
+    projected->x = (SCREEN_W / 2) + ((camera->x * FOCAL_LENGTH) / z);
+    projected->y = (SCREEN_H / 2) - ((camera->y * FOCAL_LENGTH) / z);
+    projected->z = camera->z;
+}
+
+static int triangle_depth(const Vec3i *a, const Vec3i *b, const Vec3i *c) {
+    return (a->z + b->z + c->z) / 3;
+}
+
+static void draw_projected_triangle(
     RenderContext *context,
     const ProjectedVertex *a,
     const ProjectedVertex *b,
@@ -560,36 +780,85 @@ static void draw_triangle(
     );
 }
 
+static void draw_camera_triangle_clipped(
+    RenderContext *context,
+    const Vec3i *a,
+    const Vec3i *b,
+    const Vec3i *c,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b_col
+) {
+    Vec3i input[3];
+    Vec3i clipped[4];
+
+    input[0] = *a;
+    input[1] = *b;
+    input[2] = *c;
+
+    const int count = clip_triangle_to_near_plane(input, clipped);
+
+    if (count < 3) {
+        return;
+    }
+
+    ProjectedVertex p0;
+    ProjectedVertex p1;
+    ProjectedVertex p2;
+    ProjectedVertex p3;
+
+    project_camera_vertex(&(clipped[0]), &p0);
+    project_camera_vertex(&(clipped[1]), &p1);
+    project_camera_vertex(&(clipped[2]), &p2);
+
+    int depth = triangle_depth(&(clipped[0]), &(clipped[1]), &(clipped[2]));
+    int ot_z = depth_to_ot(depth);
+
+    draw_projected_triangle(
+        context,
+        &p0,
+        &p1,
+        &p2,
+        r,
+        g,
+        b_col,
+        ot_z
+    );
+
+    if (count == 4) {
+        project_camera_vertex(&(clipped[3]), &p3);
+
+        depth = triangle_depth(&(clipped[0]), &(clipped[2]), &(clipped[3]));
+        ot_z = depth_to_ot(depth);
+
+        draw_projected_triangle(
+            context,
+            &p0,
+            &p2,
+            &p3,
+            r,
+            g,
+            b_col,
+            ot_z
+        );
+    }
+}
+
 static void draw_mesh(RenderContext *context) {
     for (int i = 0; i < mesh_face_count; i++) {
         const MeshFace *face = &(mesh_faces[i]);
 
-        if (
-            camera_vertices[face->v[0]].z <= 32 ||
-            camera_vertices[face->v[1]].z <= 32 ||
-            camera_vertices[face->v[2]].z <= 32 ||
-            camera_vertices[face->v[3]].z <= 32
-        ) {
-            continue;
-        }
-
-        /*
-         * Camera looks toward +Z.
-         * Visible faces have normals pointing toward -Z.
-         */
         if (face_normal_z(face) >= 0) {
             continue;
         }
 
-        const int ot_z = depth_to_ot(face_depth(face));
+        const Vec3i *v0 = &(camera_vertices[face->v[0]]);
+        const Vec3i *v1 = &(camera_vertices[face->v[1]]);
+        const Vec3i *v2 = &(camera_vertices[face->v[2]]);
+        const Vec3i *v3 = &(camera_vertices[face->v[3]]);
 
-        const ProjectedVertex *v0 = &(projected_vertices[face->v[0]]);
-        const ProjectedVertex *v1 = &(projected_vertices[face->v[1]]);
-        const ProjectedVertex *v2 = &(projected_vertices[face->v[2]]);
-        const ProjectedVertex *v3 = &(projected_vertices[face->v[3]]);
-
-        draw_triangle(context, v0, v1, v2, face->r, face->g, face->b, ot_z);
-        draw_triangle(context, v0, v2, v3, face->r, face->g, face->b, ot_z);
+        draw_camera_triangle_clipped(context, v0, v1, v2, face->r, face->g, face->b);
+        draw_camera_triangle_clipped(context, v0, v2, v3, face->r, face->g, face->b);
     }
 }
 
@@ -604,16 +873,27 @@ int main(int argc, const char **argv) {
     init_input();
 
     build_mesh();
+    reset_camera();
 
     for (;;) {
         update_input();
 
-        transform_all_vertices(camera_angle_y, camera_tilt_x);
+        transform_all_vertices();
         draw_mesh(&ctx);
+        draw_crosshair(&ctx);
 
         draw_text(&ctx, 8, 16, 0, "MINECRAFT PS1");
-        draw_text(&ctx, 8, 32, 0, "DPAD ROT/TILT  L1/R1 ZOOM");
-        draw_text(&ctx, 8, 48, 0, "START AUTO  SELECT RESET");
+        draw_text(&ctx, 8, 32, 0, "NEAR-PLANE CLIPPING");
+
+        if (fly_mode_enabled) {
+            draw_text(&ctx, 8, 48, 0, "MODE: FLY  START WALK");
+            draw_text(&ctx, 8, 64, 0, "DPAD MOVE/TURN L1/R1 STRAFE");
+            draw_text(&ctx, 8, 80, 0, "TRI/CROSS PITCH L2/R2 HEIGHT");
+        } else {
+            draw_text(&ctx, 8, 48, 0, "MODE: WALK  START FLY");
+            draw_text(&ctx, 8, 64, 0, "DPAD WALK/TURN L1/R1 STRAFE");
+            draw_text(&ctx, 8, 80, 0, "TRI/CROSS PITCH SELECT RESET");
+        }
 
         flip_buffers(&ctx);
     }
