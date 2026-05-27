@@ -94,6 +94,12 @@
 #define INVENTORY_CURSOR_HOTBAR_START INVENTORY_STORAGE_SLOT_COUNT
 #define STACK_MAX_COUNT 64
 
+#define BLOCK_BREAK_MIN_FRAMES 45
+#define BLOCK_BREAK_DIRT_FRAMES 90
+#define BLOCK_BREAK_GRASS_FRAMES 100
+#define BLOCK_BREAK_SAND_FRAMES 65
+#define BLOCK_BREAK_STONE_FRAMES 170
+
 #define PAD_BUFFER_SIZE 34
 
 #define FILE_MODE_READ 1
@@ -172,6 +178,7 @@ typedef struct {
     int hit_x;
     int hit_y;
     int hit_z;
+    int hit_face;
     int place_x;
     int place_y;
     int place_z;
@@ -312,6 +319,15 @@ static ItemStack inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
     { BLOCK_AIR, 0 },
     { BLOCK_AIR, 0 }
 };
+
+static int breaking_active = 0;
+static int breaking_block_x = 0;
+static int breaking_block_y = 0;
+static int breaking_block_z = 0;
+static int breaking_block_face = FACE_POS_Y;
+static int breaking_block_type = BLOCK_AIR;
+static int breaking_progress = 0;
+static int breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
 
 static uint16_t pad_previous_buttons = 0;
 
@@ -658,6 +674,194 @@ static void draw_crosshair(RenderContext *context) {
     draw_line(context, cx + 2, cy, cx + 5, cy, 0, 235, 235, 235);
     draw_line(context, cx, cy - 5, cx, cy - 2, 0, 235, 235, 235);
     draw_line(context, cx, cy + 2, cx, cy + 5, 0, 235, 235, 235);
+}
+
+static int project_breaking_world_point(
+    int world_x,
+    int world_y,
+    int world_z,
+    ProjectedVertex *projected
+) {
+    const int sin_y = isin(-camera_yaw);
+    const int cos_y = icos(-camera_yaw);
+
+    const int sin_x = isin(camera_pitch);
+    const int cos_x = icos(camera_pitch);
+
+    const int rel_x = world_x - camera_pos_x;
+    const int rel_y = world_y - camera_pos_y;
+    const int rel_z = world_z - camera_pos_z;
+
+    const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
+    const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;
+
+    const int y2 = ((rel_y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
+    const int z2 = ((rel_y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
+
+    if (z2 < NEAR_PLANE_Z || z2 > FAR_PLANE_Z) {
+        return 0;
+    }
+
+    projected->x = (SCREEN_W / 2) + ((x1 * FOCAL_LENGTH) / z2);
+    projected->y = (SCREEN_H / 2) - ((y2 * FOCAL_LENGTH) / z2);
+    projected->z = z2;
+
+    return 1;
+}
+
+static ProjectedVertex interpolate_breaking_face_point(
+    const ProjectedVertex *p0,
+    const ProjectedVertex *p1,
+    const ProjectedVertex *p3,
+    int u,
+    int v
+) {
+    ProjectedVertex result;
+
+    result.x = p0->x + (((p1->x - p0->x) * u) / 16) + (((p3->x - p0->x) * v) / 16);
+    result.y = p0->y + (((p1->y - p0->y) * u) / 16) + (((p3->y - p0->y) * v) / 16);
+    result.z = p0->z + (((p1->z - p0->z) * u) / 16) + (((p3->z - p0->z) * v) / 16);
+
+    return result;
+}
+
+static void draw_breaking_crack_line(
+    RenderContext *context,
+    const ProjectedVertex *p0,
+    const ProjectedVertex *p1,
+    const ProjectedVertex *p3,
+    int u0,
+    int v0,
+    int u1,
+    int v1
+) {
+    const ProjectedVertex a = interpolate_breaking_face_point(p0, p1, p3, u0, v0);
+    const ProjectedVertex b = interpolate_breaking_face_point(p0, p1, p3, u1, v1);
+
+    /*
+     * Two very close dark lines make the crack readable on noisy block colors.
+     */
+    draw_line(context, a.x, a.y, b.x, b.y, 0, 8, 8, 8);
+    draw_line(context, a.x + 1, a.y, b.x + 1, b.y, 0, 42, 42, 42);
+}
+
+static int get_breaking_face_vertices(ProjectedVertex out[4]) {
+    const int x0 = tile_to_world_center(breaking_block_x) - BLOCK_HALF;
+    const int x1 = tile_to_world_center(breaking_block_x) + BLOCK_HALF;
+    const int y0 = block_y_to_world_min(breaking_block_y);
+    const int y1 = block_y_to_world_top(breaking_block_y);
+    const int z0 = tile_to_world_center(breaking_block_z) - BLOCK_HALF;
+    const int z1 = tile_to_world_center(breaking_block_z) + BLOCK_HALF;
+
+    int wx[4];
+    int wy[4];
+    int wz[4];
+
+    switch (breaking_block_face) {
+        case FACE_NEG_X:
+            wx[0] = x0; wy[0] = y0; wz[0] = z1;
+            wx[1] = x0; wy[1] = y1; wz[1] = z1;
+            wx[2] = x0; wy[2] = y1; wz[2] = z0;
+            wx[3] = x0; wy[3] = y0; wz[3] = z0;
+            break;
+
+        case FACE_POS_X:
+            wx[0] = x1; wy[0] = y0; wz[0] = z0;
+            wx[1] = x1; wy[1] = y1; wz[1] = z0;
+            wx[2] = x1; wy[2] = y1; wz[2] = z1;
+            wx[3] = x1; wy[3] = y0; wz[3] = z1;
+            break;
+
+        case FACE_NEG_Z:
+            wx[0] = x0; wy[0] = y0; wz[0] = z0;
+            wx[1] = x0; wy[1] = y1; wz[1] = z0;
+            wx[2] = x1; wy[2] = y1; wz[2] = z0;
+            wx[3] = x1; wy[3] = y0; wz[3] = z0;
+            break;
+
+        case FACE_POS_Z:
+            wx[0] = x1; wy[0] = y0; wz[0] = z1;
+            wx[1] = x1; wy[1] = y1; wz[1] = z1;
+            wx[2] = x0; wy[2] = y1; wz[2] = z1;
+            wx[3] = x0; wy[3] = y0; wz[3] = z1;
+            break;
+
+        case FACE_NEG_Y:
+            wx[0] = x0; wy[0] = y0; wz[0] = z1;
+            wx[1] = x1; wy[1] = y0; wz[1] = z1;
+            wx[2] = x1; wy[2] = y0; wz[2] = z0;
+            wx[3] = x0; wy[3] = y0; wz[3] = z0;
+            break;
+
+        case FACE_POS_Y:
+        default:
+            wx[0] = x0; wy[0] = y1; wz[0] = z0;
+            wx[1] = x1; wy[1] = y1; wz[1] = z0;
+            wx[2] = x1; wy[2] = y1; wz[2] = z1;
+            wx[3] = x0; wy[3] = y1; wz[3] = z1;
+            break;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (!project_breaking_world_point(wx[i], wy[i], wz[i], &(out[i]))) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static void draw_breaking_overlay(RenderContext *context) {
+    if (!breaking_active || breaking_required_frames <= 0) {
+        return;
+    }
+
+    ProjectedVertex face[4];
+    int stage = (breaking_progress * 7) / breaking_required_frames;
+
+    if (stage < 1) {
+        stage = 1;
+    }
+
+    if (stage > 7) {
+        stage = 7;
+    }
+
+    if (!get_breaking_face_vertices(face)) {
+        return;
+    }
+
+    /*
+     * Minecraft-like cracks projected onto the actual targeted block face.
+     * No progress bar and no cursor-space sticks.
+     */
+    draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 7, 2, 8, 7);
+
+    if (stage >= 2) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 8, 7, 5, 10);
+    }
+
+    if (stage >= 3) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 8, 7, 12, 9);
+    }
+
+    if (stage >= 4) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 5, 10, 3, 14);
+    }
+
+    if (stage >= 5) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 12, 9, 14, 13);
+    }
+
+    if (stage >= 6) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 7, 2, 4, 4);
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 8, 7, 10, 4);
+    }
+
+    if (stage >= 7) {
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 5, 10, 8, 14);
+        draw_breaking_crack_line(context, &(face[0]), &(face[1]), &(face[3]), 12, 9, 11, 15);
+    }
 }
 
 static void clear_bytes(uint8_t *data, int size) {
@@ -1177,6 +1381,37 @@ static int is_valid_block_position(int x, int y, int z) {
     return (y >= 0 && y < WORLD_HEIGHT);
 }
 
+static int get_hit_face_from_empty_block(
+    int empty_x,
+    int empty_y,
+    int empty_z,
+    int block_x,
+    int block_y,
+    int block_z
+) {
+    if (empty_x < block_x) {
+        return FACE_NEG_X;
+    }
+
+    if (empty_x > block_x) {
+        return FACE_POS_X;
+    }
+
+    if (empty_z < block_z) {
+        return FACE_NEG_Z;
+    }
+
+    if (empty_z > block_z) {
+        return FACE_POS_Z;
+    }
+
+    if (empty_y < block_y) {
+        return FACE_NEG_Y;
+    }
+
+    return FACE_POS_Y;
+}
+
 static RaycastHit raycast_block(void) {
     RaycastHit hit;
     Vec3i dir;
@@ -1185,6 +1420,7 @@ static RaycastHit raycast_block(void) {
     hit.hit_x = 0;
     hit.hit_y = 0;
     hit.hit_z = 0;
+    hit.hit_face = FACE_POS_Y;
     hit.place_x = 0;
     hit.place_y = 0;
     hit.place_z = 0;
@@ -1233,10 +1469,19 @@ static RaycastHit raycast_block(void) {
                 hit.hit_z = block_z;
 
                 if (last_empty_valid) {
+                    hit.hit_face = get_hit_face_from_empty_block(
+                        last_empty_x,
+                        last_empty_y,
+                        last_empty_z,
+                        block_x,
+                        block_y,
+                        block_z
+                    );
                     hit.place_x = last_empty_x;
                     hit.place_y = last_empty_y;
                     hit.place_z = last_empty_z;
                 } else {
+                    hit.hit_face = FACE_POS_Y;
                     hit.place_x = block_x;
                     hit.place_y = block_y + 1;
                     hit.place_z = block_z;
@@ -1255,17 +1500,88 @@ static RaycastHit raycast_block(void) {
     return hit;
 }
 
-static void remove_target_block(void) {
+static int get_block_hardness_frames(int block_type) {
+    if (block_type == BLOCK_SAND) {
+        return BLOCK_BREAK_SAND_FRAMES;
+    }
+
+    if (block_type == BLOCK_STONE) {
+        return BLOCK_BREAK_STONE_FRAMES;
+    }
+
+    if (block_type == BLOCK_GRASS) {
+        return BLOCK_BREAK_GRASS_FRAMES;
+    }
+
+    if (block_type == BLOCK_DIRT) {
+        return BLOCK_BREAK_DIRT_FRAMES;
+    }
+
+    return BLOCK_BREAK_MIN_FRAMES;
+}
+
+static void reset_block_breaking(void) {
+    breaking_active = 0;
+    breaking_block_x = 0;
+    breaking_block_y = 0;
+    breaking_block_z = 0;
+    breaking_block_face = FACE_POS_Y;
+    breaking_block_type = BLOCK_AIR;
+    breaking_progress = 0;
+    breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
+}
+
+static void update_block_breaking(int is_break_button_down) {
     const RaycastHit hit = raycast_block();
 
-    if (!hit.found) {
+    if (!is_break_button_down || !hit.found) {
+        reset_block_breaking();
         return;
     }
 
-    set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
+    const int block_type = get_block_type(hit.hit_x, hit.hit_y, hit.hit_z);
 
-    if (!fly_mode_enabled) {
-        snap_camera_to_ground();
+    if (block_type == BLOCK_AIR) {
+        reset_block_breaking();
+        return;
+    }
+
+    if (
+        !breaking_active ||
+        breaking_block_x != hit.hit_x ||
+        breaking_block_y != hit.hit_y ||
+        breaking_block_z != hit.hit_z ||
+        breaking_block_face != hit.hit_face ||
+        breaking_block_type != block_type
+    ) {
+        breaking_active = 1;
+        breaking_block_x = hit.hit_x;
+        breaking_block_y = hit.hit_y;
+        breaking_block_z = hit.hit_z;
+        breaking_block_face = hit.hit_face;
+        breaking_block_type = block_type;
+        breaking_progress = 0;
+        breaking_required_frames = get_block_hardness_frames(block_type);
+        set_system_status("BREAKING...", 30);
+    }
+
+    /*
+     * Keep this intentionally slow and visible.
+     * Earlier values felt identical to instant block deletion.
+     */
+    if (breaking_progress < breaking_required_frames) {
+        breaking_progress++;
+    }
+
+    if (breaking_progress >= breaking_required_frames) {
+        set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
+
+        if (!fly_mode_enabled) {
+            snap_camera_to_ground();
+        }
+
+        set_system_status("BLOCK BROKEN", 45);
+        reset_block_breaking();
     }
 }
 
@@ -1409,6 +1725,7 @@ static void update_input(void) {
     const int right_z = -isin(camera_yaw);
 
     if (pressed_this_frame & PAD_START) {
+        reset_block_breaking();
         app_state = APP_STATE_PAUSE;
         pause_selected_option = PAUSE_OPTION_RESUME;
         pad_previous_buttons = buttons;
@@ -1423,11 +1740,10 @@ static void update_input(void) {
         }
     }
 
-    if (pressed_this_frame & PAD_SQUARE) {
-        remove_target_block();
-    }
+    update_block_breaking((buttons & PAD_SQUARE) != 0);
 
     if (pressed_this_frame & PAD_CIRCLE) {
+        reset_block_breaking();
         add_target_block();
     }
 
@@ -2901,7 +3217,7 @@ static void draw_game_hud(RenderContext *context) {
         draw_panel(context, 6, 8, 148, 64, 2, 32, 36, 42, 174, 174, 174);
         draw_text(context, 16, 18, 0, "MINECRAFT PS1");
         draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
-        draw_text(context, 16, 50, 0, autojump_enabled ? "AUTOJUMP ON" : "AUTOJUMP OFF");
+        draw_text(context, 16, 50, 0, autojump_enabled ? "SQUARE HOLD BREAK" : "AUTOJUMP OFF");
     }
 
     if (system_status_timer > 0) {
@@ -2939,6 +3255,7 @@ static void start_new_game(void) {
     reset_world_edits();
     reset_camera();
     reset_inventory_items();
+    reset_block_breaking();
     pause_selected_option = PAUSE_OPTION_RESUME;
 
     app_state = APP_STATE_PLAY;
@@ -2948,6 +3265,7 @@ static void start_new_game(void) {
 static void start_loaded_game(void) {
     if (load_game_from_memory_card()) {
         reset_inventory_items();
+        reset_block_breaking();
         pause_selected_option = PAUSE_OPTION_RESUME;
         app_state = APP_STATE_PLAY;
         set_system_status("LOAD OK", 90);
@@ -3328,6 +3646,7 @@ int main(int argc, const char **argv) {
         rebuild_mesh_if_needed();
         transform_all_vertices();
         draw_mesh(&ctx);
+        draw_breaking_overlay(&ctx);
         draw_crosshair(&ctx);
         draw_game_hud(&ctx);
 
