@@ -92,6 +92,7 @@
 #define INVENTORY_HOTBAR_Y 158
 #define INVENTORY_CURSOR_STORAGE_START 0
 #define INVENTORY_CURSOR_HOTBAR_START INVENTORY_STORAGE_SLOT_COUNT
+#define STACK_MAX_COUNT 64
 
 #define PAD_BUFFER_SIZE 34
 
@@ -115,10 +116,11 @@
 #define PAUSE_OPTION_TOGGLE_FLY 2
 #define PAUSE_OPTION_TOGGLE_HUD 3
 #define PAUSE_OPTION_TOGGLE_FOG 4
-#define PAUSE_OPTION_SAVE_GAME 5
-#define PAUSE_OPTION_LOAD_GAME 6
-#define PAUSE_OPTION_RETURN_MENU 7
-#define PAUSE_OPTION_COUNT 8
+#define PAUSE_OPTION_TOGGLE_AUTOJUMP 5
+#define PAUSE_OPTION_SAVE_GAME 6
+#define PAUSE_OPTION_LOAD_GAME 7
+#define PAUSE_OPTION_RETURN_MENU 8
+#define PAUSE_OPTION_COUNT 9
 
 typedef struct {
     DISPENV disp_env;
@@ -159,6 +161,11 @@ typedef struct {
     int z;
     uint8_t type;
 } BlockEdit;
+
+typedef struct {
+    uint8_t type;
+    uint8_t count;
+} ItemStack;
 
 typedef struct {
     int found;
@@ -256,53 +263,54 @@ static int pause_selected_option = PAUSE_OPTION_RESUME;
  */
 static int hud_visible = 0;
 static int fog_enabled = 0;
+static int autojump_enabled = 1;
 static int selected_hotbar_slot = 0;
 static int player_health_hearts = HEART_COUNT;
 static int inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
-static uint8_t inventory_held_block = BLOCK_AIR;
+static ItemStack inventory_held_stack = { BLOCK_AIR, 0 };
 
-static uint8_t hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
-    BLOCK_DIRT,
-    BLOCK_STONE,
-    BLOCK_SAND,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR
+static ItemStack hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
+    { BLOCK_DIRT, STACK_MAX_COUNT },
+    { BLOCK_STONE, STACK_MAX_COUNT },
+    { BLOCK_SAND, STACK_MAX_COUNT },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 }
 };
 
-static uint8_t inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
-    BLOCK_DIRT,
-    BLOCK_DIRT,
-    BLOCK_STONE,
-    BLOCK_STONE,
-    BLOCK_SAND,
-    BLOCK_SAND,
-    BLOCK_GRASS,
-    BLOCK_AIR,
-    BLOCK_AIR,
+static ItemStack inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
 
-    BLOCK_DIRT,
-    BLOCK_STONE,
-    BLOCK_SAND,
-    BLOCK_GRASS,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
 
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR,
-    BLOCK_AIR
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 }
 };
 
 static uint16_t pad_previous_buttons = 0;
@@ -1049,16 +1057,23 @@ static int is_player_footprint_clear_at(
         }
 
         /*
-         * Key rule:
+         * Footprint rule:
          *
-         * Do not auto-step onto higher blocks. A block next to the player is
-         * treated as a wall until we add a real jump/climb mechanic.
+         * Without autojump, higher blocks inside the player's collision radius
+         * are walls.
          *
-         * This prevents the camera from sliding into side blocks and then
-         * seeing through them when turning.
+         * With autojump enabled, allow the footprint to touch a block that is
+         * one level higher. Otherwise the player can never get close enough for
+         * the center point to cross onto the higher tile.
          */
         if (sample_top_block_y > target_top_block_y) {
-            return 0;
+            if (!autojump_enabled) {
+                return 0;
+            }
+
+            if ((sample_top_block_y - target_top_block_y) > 1) {
+                return 0;
+            }
         }
     }
 
@@ -1102,14 +1117,18 @@ static int is_walk_target_valid(int next_x, int next_z) {
     }
 
     /*
-     * No automatic climb for now.
-     *
-     * The old rule allowed +1 block auto-step. That felt convenient, but it
-     * also meant a placed block could be treated like a step instead of a wall,
-     * letting the camera get too close to its side faces.
+     * Optional Minecraft-like autojump.
+     * ON: allow stepping up exactly one block.
+     * OFF: higher blocks behave like walls.
      */
     if (next_top_block_y > current_top_block_y) {
-        return 0;
+        if (!autojump_enabled) {
+            return 0;
+        }
+
+        if ((next_top_block_y - current_top_block_y) > 1) {
+            return 0;
+        }
     }
 
     /*
@@ -1282,12 +1301,52 @@ static int block_intersects_player_footprint(int block_x, int block_y, int block
     return 1;
 }
 
+static void normalize_stack(ItemStack *stack) {
+    if (stack->count == 0 || stack->type == BLOCK_AIR) {
+        stack->type = BLOCK_AIR;
+        stack->count = 0;
+        return;
+    }
+
+    if (stack->count > STACK_MAX_COUNT) {
+        stack->count = STACK_MAX_COUNT;
+    }
+}
+
+static int stack_is_empty(const ItemStack *stack) {
+    return stack->type == BLOCK_AIR || stack->count == 0;
+}
+
 static int get_selected_hotbar_block_type(void) {
     if (selected_hotbar_slot < 0 || selected_hotbar_slot >= HOTBAR_SLOT_COUNT) {
         return BLOCK_AIR;
     }
 
-    return hotbar_slot_blocks[selected_hotbar_slot];
+    if (stack_is_empty(&(hotbar_slot_blocks[selected_hotbar_slot]))) {
+        return BLOCK_AIR;
+    }
+
+    return hotbar_slot_blocks[selected_hotbar_slot].type;
+}
+
+static void consume_selected_hotbar_block(void) {
+    ItemStack *stack;
+
+    if (selected_hotbar_slot < 0 || selected_hotbar_slot >= HOTBAR_SLOT_COUNT) {
+        return;
+    }
+
+    stack = &(hotbar_slot_blocks[selected_hotbar_slot]);
+
+    if (stack_is_empty(stack)) {
+        return;
+    }
+
+    if (stack->count > 0) {
+        stack->count--;
+    }
+
+    normalize_stack(stack);
 }
 
 static void select_previous_hotbar_slot(void) {
@@ -1336,6 +1395,7 @@ static void add_target_block(void) {
     }
 
     set_block_type(hit.place_x, hit.place_y, hit.place_z, selected_block_type);
+    consume_selected_hotbar_block();
 }
 
 static void update_input(void) {
@@ -2516,10 +2576,37 @@ static int block_type_to_icon_texture(int block_type) {
     return -1;
 }
 
+static void draw_stack_count(RenderContext *context, int x, int y, int count) {
+    char text_buffer[4];
+    int bg_w = 10;
+
+    if (count <= 1) {
+        return;
+    }
+
+    if (count >= 10) {
+        text_buffer[0] = (char)('0' + (count / 10));
+        text_buffer[1] = (char)('0' + (count % 10));
+        text_buffer[2] = 0;
+        bg_w = 16;
+    } else {
+        text_buffer[0] = (char)('0' + count);
+        text_buffer[1] = 0;
+    }
+
+    /*
+     * Keep stack numbers readable over noisy block icons.
+     * The small dark plate also makes the number feel closer to Minecraft UI.
+     */
+    draw_filled_rect(context, x - 2, y - 1, bg_w, 8, 1, 12, 12, 12);
+    draw_text(context, x, y, 0, text_buffer);
+}
+
 static void draw_hotbar_slot(RenderContext *context, int slot_index, int selected) {
     const int x = HOTBAR_START_X + (slot_index * (HOTBAR_SLOT_SIZE + HOTBAR_SLOT_GAP));
     const int y = HOTBAR_Y;
-    const int block_type = hotbar_slot_blocks[slot_index];
+    const ItemStack *stack = &(hotbar_slot_blocks[slot_index]);
+    const int block_type = stack_is_empty(stack) ? BLOCK_AIR : stack->type;
     const int texture_type = block_type_to_icon_texture(block_type);
 
     if (selected) {
@@ -2536,6 +2623,8 @@ static void draw_hotbar_slot(RenderContext *context, int slot_index, int selecte
     draw_line(context, x, y + HOTBAR_SLOT_SIZE - 1, x + HOTBAR_SLOT_SIZE - 1, y + HOTBAR_SLOT_SIZE - 1, 0, 18, 18, 18);
 
     if (texture_type >= 0) {
+        draw_stack_count(context, x + 8, y + 12, stack->count);
+
         draw_minecraft_texture_block(
             context,
             x + 4,
@@ -2584,7 +2673,7 @@ static void draw_hearts(RenderContext *context) {
     }
 }
 
-static uint8_t *get_inventory_cursor_block_ptr(void) {
+static ItemStack *get_inventory_cursor_stack_ptr(void) {
     if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
         return &(inventory_storage_blocks[inventory_cursor_slot]);
     }
@@ -2631,22 +2720,28 @@ static void move_inventory_cursor(int dx, int dy) {
 }
 
 static void swap_inventory_held_with_cursor(void) {
-    uint8_t *slot = get_inventory_cursor_block_ptr();
-    const uint8_t previous = *slot;
+    ItemStack *slot = get_inventory_cursor_stack_ptr();
+    const ItemStack previous = *slot;
 
-    *slot = inventory_held_block;
-    inventory_held_block = previous;
+    *slot = inventory_held_stack;
+    inventory_held_stack = previous;
 
-    set_system_status(inventory_held_block == BLOCK_AIR ? "HAND EMPTY" : "ITEM HELD", 45);
+    normalize_stack(slot);
+    normalize_stack(&inventory_held_stack);
+
+    set_system_status(stack_is_empty(&inventory_held_stack) ? "HAND EMPTY" : "ITEM HELD", 45);
 }
 
 static void quick_move_inventory_slot_to_hotbar(void) {
-    uint8_t *slot = get_inventory_cursor_block_ptr();
-    uint8_t *target = &(hotbar_slot_blocks[selected_hotbar_slot]);
-    const uint8_t previous = *target;
+    ItemStack *slot = get_inventory_cursor_stack_ptr();
+    ItemStack *target = &(hotbar_slot_blocks[selected_hotbar_slot]);
+    const ItemStack previous = *target;
 
     *target = *slot;
     *slot = previous;
+
+    normalize_stack(slot);
+    normalize_stack(target);
 
     set_system_status("MOVED TO HOTBAR", 55);
 }
@@ -2656,11 +2751,12 @@ static void draw_inventory_slot(
     int x,
     int y,
     uint8_t block_type,
+    uint8_t count,
     int selected,
     int disabled,
     int seed
 ) {
-    const int texture_type = block_type_to_icon_texture(block_type);
+    const int texture_type = block_type_to_icon_texture(count == 0 ? BLOCK_AIR : block_type);
 
     if (selected) {
         draw_filled_rect(context, x - 2, y - 2, INVENTORY_SLOT_SIZE + 4, INVENTORY_SLOT_SIZE + 4, 1, 244, 244, 244);
@@ -2680,6 +2776,8 @@ static void draw_inventory_slot(
     draw_line(context, x, y + INVENTORY_SLOT_SIZE - 1, x + INVENTORY_SLOT_SIZE - 1, y + INVENTORY_SLOT_SIZE - 1, 0, 22, 22, 22);
 
     if (texture_type >= 0) {
+        draw_stack_count(context, x + 7, y + 10, count);
+
         draw_minecraft_texture_block(
             context,
             x + 3,
@@ -2703,7 +2801,8 @@ static void draw_inventory_grid(RenderContext *context) {
             context,
             x,
             y,
-            inventory_storage_blocks[i],
+            inventory_storage_blocks[i].type,
+            inventory_storage_blocks[i].count,
             inventory_cursor_slot == i,
             0,
             300 + i
@@ -2719,7 +2818,8 @@ static void draw_inventory_grid(RenderContext *context) {
             context,
             x,
             y,
-            hotbar_slot_blocks[i],
+            hotbar_slot_blocks[i].type,
+            hotbar_slot_blocks[i].count,
             inventory_cursor_slot == cursor_index,
             0,
             500 + i
@@ -2728,23 +2828,23 @@ static void draw_inventory_grid(RenderContext *context) {
 }
 
 static void draw_inventory_crafting_area(RenderContext *context) {
-    draw_text(context, 190, 48, 0, "CRAFTING");
+    draw_text(context, 190, 34, 0, "CRAFTING");
 
-    draw_inventory_slot(context, 190, 64, BLOCK_AIR, 0, 1, 600);
-    draw_inventory_slot(context, 210, 64, BLOCK_AIR, 0, 1, 601);
-    draw_inventory_slot(context, 190, 84, BLOCK_AIR, 0, 1, 602);
-    draw_inventory_slot(context, 210, 84, BLOCK_AIR, 0, 1, 603);
+    draw_inventory_slot(context, 190, 48, BLOCK_AIR, 0, 0, 1, 600);
+    draw_inventory_slot(context, 210, 48, BLOCK_AIR, 0, 0, 1, 601);
+    draw_inventory_slot(context, 190, 68, BLOCK_AIR, 0, 0, 1, 602);
+    draw_inventory_slot(context, 210, 68, BLOCK_AIR, 0, 0, 1, 603);
 
-    draw_text(context, 234, 75, 0, ">");
-    draw_inventory_slot(context, 250, 74, BLOCK_AIR, 0, 1, 604);
+    draw_text(context, 234, 59, 0, ">");
+    draw_inventory_slot(context, 250, 58, BLOCK_AIR, 0, 0, 1, 604);
 }
 
 static void draw_inventory_armor_area(RenderContext *context) {
     draw_text(context, 26, 42, 0, "ARMOR");
-    draw_inventory_slot(context, 28, 58, BLOCK_AIR, 0, 1, 700);
-    draw_inventory_slot(context, 28, 78, BLOCK_AIR, 0, 1, 701);
-    draw_inventory_slot(context, 28, 98, BLOCK_AIR, 0, 1, 702);
-    draw_inventory_slot(context, 28, 118, BLOCK_AIR, 0, 1, 703);
+    draw_inventory_slot(context, 28, 58, BLOCK_AIR, 0, 0, 1, 700);
+    draw_inventory_slot(context, 28, 78, BLOCK_AIR, 0, 0, 1, 701);
+    draw_inventory_slot(context, 28, 98, BLOCK_AIR, 0, 0, 1, 702);
+    draw_inventory_slot(context, 28, 118, BLOCK_AIR, 0, 0, 1, 703);
 }
 
 static void draw_inventory_player_preview(RenderContext *context) {
@@ -2771,11 +2871,20 @@ static void draw_inventory_screen(RenderContext *context) {
     draw_text(context, 70, 182, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP");
     draw_text(context, 70, 196, 0, "SQUARE TO SELECTED HOTBAR  START BACK");
 
-    if (inventory_held_block != BLOCK_AIR) {
-        const int texture_type = block_type_to_icon_texture(inventory_held_block);
+    if (!stack_is_empty(&inventory_held_stack)) {
+        const int texture_type = block_type_to_icon_texture(inventory_held_stack.type);
 
         draw_text(context, 214, 182, 0, "HAND");
-        draw_inventory_slot(context, 256, 178, inventory_held_block, 1, 0, 800 + texture_type);
+        draw_inventory_slot(
+            context,
+            256,
+            178,
+            inventory_held_stack.type,
+            inventory_held_stack.count,
+            1,
+            0,
+            800 + texture_type
+        );
     }
 
     if (system_status_timer > 0) {
@@ -2792,7 +2901,7 @@ static void draw_game_hud(RenderContext *context) {
         draw_panel(context, 6, 8, 148, 64, 2, 32, 36, 42, 174, 174, 174);
         draw_text(context, 16, 18, 0, "MINECRAFT PS1");
         draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
-        draw_text(context, 16, 50, 0, fog_enabled ? "FOG ON  L2/R2 SLOT" : "FOG OFF L2/R2 SLOT");
+        draw_text(context, 16, 50, 0, autojump_enabled ? "AUTOJUMP ON" : "AUTOJUMP OFF");
     }
 
     if (system_status_timer > 0) {
@@ -2800,11 +2909,37 @@ static void draw_game_hud(RenderContext *context) {
         draw_text(context, 18, hud_visible ? 84 : 12, 0, system_status_text);
     }
 }
+static void reset_inventory_items(void) {
+    for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+        hotbar_slot_blocks[i].type = BLOCK_AIR;
+        hotbar_slot_blocks[i].count = 0;
+    }
+
+    hotbar_slot_blocks[0].type = BLOCK_DIRT;
+    hotbar_slot_blocks[0].count = STACK_MAX_COUNT;
+
+    hotbar_slot_blocks[1].type = BLOCK_STONE;
+    hotbar_slot_blocks[1].count = STACK_MAX_COUNT;
+
+    hotbar_slot_blocks[2].type = BLOCK_SAND;
+    hotbar_slot_blocks[2].count = STACK_MAX_COUNT;
+
+    for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
+        inventory_storage_blocks[i].type = BLOCK_AIR;
+        inventory_storage_blocks[i].count = 0;
+    }
+
+    inventory_held_stack.type = BLOCK_AIR;
+    inventory_held_stack.count = 0;
+    inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
+    selected_hotbar_slot = 0;
+}
+
 static void start_new_game(void) {
     reset_world_edits();
     reset_camera();
+    reset_inventory_items();
     pause_selected_option = PAUSE_OPTION_RESUME;
-    selected_hotbar_slot = 0;
 
     app_state = APP_STATE_PLAY;
     set_system_status("NEW GAME", 90);
@@ -2812,6 +2947,7 @@ static void start_new_game(void) {
 
 static void start_loaded_game(void) {
     if (load_game_from_memory_card()) {
+        reset_inventory_items();
         pause_selected_option = PAUSE_OPTION_RESUME;
         app_state = APP_STATE_PLAY;
         set_system_status("LOAD OK", 90);
@@ -2937,6 +3073,16 @@ static void update_pause_input(void) {
                 }
                 break;
 
+            case PAUSE_OPTION_TOGGLE_AUTOJUMP:
+                autojump_enabled = !autojump_enabled;
+
+                if (autojump_enabled) {
+                    set_system_status("AUTOJUMP ON", 90);
+                } else {
+                    set_system_status("AUTOJUMP OFF", 90);
+                }
+                break;
+
             case PAUSE_OPTION_SAVE_GAME:
                 if (save_game_to_memory_card()) {
                     set_system_status("SAVE OK", 90);
@@ -3048,74 +3194,82 @@ static void draw_pause_menu(RenderContext *context) {
     draw_minecraft_texture_block(context, 264, 20, 16, 0, 6, 104);
     draw_minecraft_texture_block(context, 280, 20, 16, 0, 6, 105);
 
-    draw_text(context, 122, 24, 0, "GAME MENU");
+    draw_text(context, 122, 20, 0, "GAME MENU");
 
     draw_pause_option(
         context,
-        78,
-        36,
-        164,
+        74,
+        32,
+        172,
         "BACK TO GAME",
         pause_selected_option == PAUSE_OPTION_RESUME
     );
     draw_pause_option(
         context,
-        78,
-        58,
-        164,
+        74,
+        52,
+        172,
         "INVENTORY",
         pause_selected_option == PAUSE_OPTION_INVENTORY
     );
     draw_pause_option(
         context,
-        78,
-        80,
-        164,
+        74,
+        72,
+        172,
         fly_mode_enabled ? "SWITCH TO WALK" : "SWITCH TO FLY",
         pause_selected_option == PAUSE_OPTION_TOGGLE_FLY
     );
     draw_pause_option(
         context,
-        78,
-        102,
-        164,
+        74,
+        92,
+        172,
         hud_visible ? "HELP HUD: ON" : "HELP HUD: OFF",
         pause_selected_option == PAUSE_OPTION_TOGGLE_HUD
     );
     draw_pause_option(
         context,
-        78,
-        124,
-        164,
+        74,
+        112,
+        172,
         fog_enabled ? "FOG: ON" : "FOG: OFF",
         pause_selected_option == PAUSE_OPTION_TOGGLE_FOG
     );
     draw_pause_option(
         context,
-        78,
-        146,
-        164,
+        74,
+        132,
+        172,
+        autojump_enabled ? "AUTOJUMP: ON" : "AUTOJUMP: OFF",
+        pause_selected_option == PAUSE_OPTION_TOGGLE_AUTOJUMP
+    );
+    draw_pause_option(
+        context,
+        74,
+        152,
+        172,
         "SAVE GAME",
         pause_selected_option == PAUSE_OPTION_SAVE_GAME
     );
     draw_pause_option(
         context,
-        78,
-        168,
-        164,
+        74,
+        172,
+        172,
         "LOAD GAME",
         pause_selected_option == PAUSE_OPTION_LOAD_GAME
     );
     draw_pause_option(
         context,
-        78,
-        190,
-        164,
+        74,
+        192,
+        172,
         "MAIN MENU",
         pause_selected_option == PAUSE_OPTION_RETURN_MENU
     );
 
-    draw_text(context, 74, 216, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
+    draw_text(context, 70, 216, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
     draw_text(context, 86, 228, 0, "START/TRIANGLE BACK");
 
     if (system_status_timer > 0) {
