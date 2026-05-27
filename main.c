@@ -100,6 +100,10 @@
 #define BLOCK_BREAK_SAND_FRAMES 65
 #define BLOCK_BREAK_STONE_FRAMES 170
 
+#define MAX_DROPPED_ITEMS 32
+#define PICKUP_DISTANCE_XZ 42
+#define PICKUP_DISTANCE_Y 90
+
 #define PAD_BUFFER_SIZE 34
 
 #define FILE_MODE_READ 1
@@ -172,6 +176,16 @@ typedef struct {
     uint8_t type;
     uint8_t count;
 } ItemStack;
+
+typedef struct {
+    int active;
+    int x;
+    int y;
+    int z;
+    uint8_t type;
+    uint8_t count;
+    int bob_frame;
+} DroppedItem;
 
 typedef struct {
     int found;
@@ -320,6 +334,8 @@ static ItemStack inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
     { BLOCK_AIR, 0 }
 };
 
+static DroppedItem dropped_items[MAX_DROPPED_ITEMS];
+
 static int breaking_active = 0;
 static int breaking_block_x = 0;
 static int breaking_block_y = 0;
@@ -343,6 +359,13 @@ static void snap_camera_to_ground(void);
 static int save_game_to_memory_card(void);
 static int load_game_from_memory_card(void);
 static void reset_world_edits(void);
+static int add_items_to_inventory(uint8_t type, int amount);
+static void spawn_dropped_item(
+    int block_type,
+    int block_x,
+    int block_y,
+    int block_z
+);
 
 /*
  * 64-step sine table.
@@ -1575,6 +1598,7 @@ static void update_block_breaking(int is_break_button_down) {
 
     if (breaking_progress >= breaking_required_frames) {
         set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
+        spawn_dropped_item(block_type, hit.hit_x, hit.hit_y, hit.hit_z);
 
         if (!fly_mode_enabled) {
             snap_camera_to_ground();
@@ -1582,6 +1606,80 @@ static void update_block_breaking(int is_break_button_down) {
 
         set_system_status("BLOCK BROKEN", 45);
         reset_block_breaking();
+    }
+}
+
+static int get_block_drop_type(int block_type) {
+    if (block_type == BLOCK_GRASS) {
+        return BLOCK_DIRT;
+    }
+
+    return block_type;
+}
+
+static void reset_dropped_items(void) {
+    for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
+        dropped_items[i].active = 0;
+        dropped_items[i].x = 0;
+        dropped_items[i].y = 0;
+        dropped_items[i].z = 0;
+        dropped_items[i].type = BLOCK_AIR;
+        dropped_items[i].count = 0;
+        dropped_items[i].bob_frame = 0;
+    }
+}
+
+static void spawn_dropped_item(int block_type, int block_x, int block_y, int block_z) {
+    const int drop_type = get_block_drop_type(block_type);
+
+    if (drop_type == BLOCK_AIR) {
+        return;
+    }
+
+    for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
+        if (!dropped_items[i].active) {
+            dropped_items[i].active = 1;
+            dropped_items[i].x = tile_to_world_center(block_x);
+            dropped_items[i].y = block_y_to_world_min(block_y) + BLOCK_HALF;
+            dropped_items[i].z = tile_to_world_center(block_z);
+            dropped_items[i].type = (uint8_t)drop_type;
+            dropped_items[i].count = 1;
+            dropped_items[i].bob_frame = 0;
+            return;
+        }
+    }
+
+    /*
+     * Fallback: if the world is full of drops, reward the item directly.
+     */
+    add_items_to_inventory((uint8_t)drop_type, 1);
+}
+
+static void update_dropped_items(void) {
+    for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
+        if (!dropped_items[i].active) {
+            continue;
+        }
+
+        dropped_items[i].bob_frame++;
+
+        if (
+            iabs(dropped_items[i].x - camera_pos_x) <= PICKUP_DISTANCE_XZ &&
+            iabs(dropped_items[i].z - camera_pos_z) <= PICKUP_DISTANCE_XZ &&
+            iabs(dropped_items[i].y - camera_pos_y) <= PICKUP_DISTANCE_Y
+        ) {
+            const int remaining = add_items_to_inventory(
+                dropped_items[i].type,
+                dropped_items[i].count
+            );
+
+            if (remaining <= 0) {
+                dropped_items[i].active = 0;
+                set_system_status("PICKED UP", 35);
+            } else {
+                dropped_items[i].count = (uint8_t)remaining;
+            }
+        }
     }
 }
 
@@ -1631,6 +1729,54 @@ static void normalize_stack(ItemStack *stack) {
 
 static int stack_is_empty(const ItemStack *stack) {
     return stack->type == BLOCK_AIR || stack->count == 0;
+}
+
+static int add_to_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
+    int remaining = amount;
+
+    if (type == BLOCK_AIR || amount <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < count && remaining > 0; i++) {
+        if (stacks[i].type == type && stacks[i].count < STACK_MAX_COUNT) {
+            const int space = STACK_MAX_COUNT - stacks[i].count;
+            const int add_count = remaining < space ? remaining : space;
+
+            stacks[i].count = (uint8_t)(stacks[i].count + add_count);
+            remaining -= add_count;
+        }
+    }
+
+    for (int i = 0; i < count && remaining > 0; i++) {
+        if (stack_is_empty(&(stacks[i]))) {
+            const int add_count = remaining < STACK_MAX_COUNT ? remaining : STACK_MAX_COUNT;
+
+            stacks[i].type = type;
+            stacks[i].count = (uint8_t)add_count;
+            remaining -= add_count;
+        }
+    }
+
+    return remaining;
+}
+
+static int add_items_to_inventory(uint8_t type, int amount) {
+    int remaining = add_to_stack_array(
+        hotbar_slot_blocks,
+        HOTBAR_SLOT_COUNT,
+        type,
+        amount
+    );
+
+    remaining = add_to_stack_array(
+        inventory_storage_blocks,
+        INVENTORY_STORAGE_SLOT_COUNT,
+        type,
+        remaining
+    );
+
+    return remaining;
 }
 
 static int get_selected_hotbar_block_type(void) {
@@ -1740,6 +1886,7 @@ static void update_input(void) {
         }
     }
 
+    update_dropped_items();
     update_block_breaking((buttons & PAD_SQUARE) != 0);
 
     if (pressed_this_frame & PAD_CIRCLE) {
@@ -2737,6 +2884,158 @@ static void draw_minecraft_texture_block(
     draw_line(context, x, y + size - 1, x + size - 1, y + size - 1, z, 34, 34, 34);
 }
 
+static int project_world_position(
+    int world_x,
+    int world_y,
+    int world_z,
+    ProjectedVertex *projected
+) {
+    const int sin_y = isin(-camera_yaw);
+    const int cos_y = icos(-camera_yaw);
+
+    const int sin_x = isin(camera_pitch);
+    const int cos_x = icos(camera_pitch);
+
+    const int rel_x = world_x - camera_pos_x;
+    const int rel_y = world_y - camera_pos_y;
+    const int rel_z = world_z - camera_pos_z;
+
+    const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
+    const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;
+
+    const int y2 = ((rel_y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
+    const int z2 = ((rel_y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
+
+    Vec3i camera_point;
+
+    if (z2 < NEAR_PLANE_Z || z2 > FAR_PLANE_Z) {
+        return 0;
+    }
+
+    camera_point.x = x1;
+    camera_point.y = y2;
+    camera_point.z = z2;
+
+    project_camera_vertex(&camera_point, projected);
+
+    if (
+        projected->x < -12 ||
+        projected->x > SCREEN_W + 12 ||
+        projected->y < -12 ||
+        projected->y > SCREEN_H + 12
+    ) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int dropped_item_texture_type(uint8_t block_type) {
+    if (block_type == BLOCK_DIRT) {
+        return 1;
+    }
+
+    if (block_type == BLOCK_STONE) {
+        return 2;
+    }
+
+    if (block_type == BLOCK_SAND) {
+        return 6;
+    }
+
+    if (block_type == BLOCK_GRASS) {
+        return 0;
+    }
+
+    return -1;
+}
+
+static void draw_dropped_item_icon(
+    RenderContext *context,
+    int x,
+    int y,
+    int size,
+    int ot_z,
+    uint8_t block_type,
+    int seed
+) {
+    const int texture_type = dropped_item_texture_type(block_type);
+
+    if (texture_type < 0) {
+        return;
+    }
+
+    /*
+     * Use the item's real OT depth, not HUD depth.
+     * This lets world polygons in front of the item cover it.
+     */
+    draw_filled_rect(context, x - 1, y - 1, size + 2, size + 2, ot_z + 1, 18, 18, 18);
+    draw_minecraft_texture_block(context, x, y, size, texture_type, ot_z, seed);
+
+    /*
+     * Extra tiny type markers make 8-12px drops more recognizable on PS1.
+     */
+    if (block_type == BLOCK_STONE) {
+        draw_line(context, x + 2, y + 3, x + size - 3, y + 3, ot_z, 190, 190, 190);
+        draw_line(context, x + 3, y + size - 4, x + size - 4, y + size - 4, ot_z, 70, 70, 70);
+    } else if (block_type == BLOCK_SAND) {
+        draw_filled_rect(context, x + 2, y + 2, 3, 3, ot_z, 240, 226, 142);
+        draw_filled_rect(context, x + size - 5, y + size - 5, 3, 3, ot_z, 156, 134, 72);
+    } else if (block_type == BLOCK_DIRT) {
+        draw_filled_rect(context, x + 2, y + size - 5, size - 4, 2, ot_z, 74, 44, 24);
+    } else if (block_type == BLOCK_GRASS) {
+        draw_filled_rect(context, x + 2, y + 2, size - 4, 2, ot_z, 96, 214, 72);
+    }
+}
+
+static void draw_dropped_items(RenderContext *context) {
+    for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
+        if (!dropped_items[i].active) {
+            continue;
+        }
+
+        ProjectedVertex projected;
+        const int bob = ((dropped_items[i].bob_frame >> 3) & 1) ? 3 : 0;
+        int ot_z;
+        int size;
+
+        if (!project_world_position(
+            dropped_items[i].x,
+            dropped_items[i].y + bob,
+            dropped_items[i].z,
+            &projected
+        )) {
+            continue;
+        }
+
+        ot_z = depth_to_ot(projected.z);
+
+        /*
+         * Approximate perspective scaling for readability.
+         * Close items are a little larger; far items remain small.
+         */
+        size = 14 - (projected.z / 90);
+
+        if (size < 7) {
+            size = 7;
+        }
+
+        if (size > 12) {
+            size = 12;
+        }
+
+        draw_dropped_item_icon(
+            context,
+            projected.x - (size / 2),
+            projected.y - (size / 2),
+            size,
+            ot_z,
+            dropped_items[i].type,
+            900 + i
+        );
+    }
+}
+
 static void draw_menu_cloud(RenderContext *context, int x, int y, int z) {
     draw_filled_rect(context, x, y + 8, 54, 10, z, 244, 248, 255);
     draw_filled_rect(context, x + 12, y, 18, 20, z, 244, 248, 255);
@@ -3255,6 +3554,7 @@ static void start_new_game(void) {
     reset_world_edits();
     reset_camera();
     reset_inventory_items();
+    reset_dropped_items();
     reset_block_breaking();
     pause_selected_option = PAUSE_OPTION_RESUME;
 
@@ -3265,6 +3565,7 @@ static void start_new_game(void) {
 static void start_loaded_game(void) {
     if (load_game_from_memory_card()) {
         reset_inventory_items();
+        reset_dropped_items();
         reset_block_breaking();
         pause_selected_option = PAUSE_OPTION_RESUME;
         app_state = APP_STATE_PLAY;
@@ -3411,6 +3712,9 @@ static void update_pause_input(void) {
 
             case PAUSE_OPTION_LOAD_GAME:
                 if (load_game_from_memory_card()) {
+                    reset_inventory_items();
+                    reset_dropped_items();
+                    reset_block_breaking();
                     app_state = APP_STATE_PLAY;
                     set_system_status("LOAD OK", 90);
                 } else {
@@ -3629,6 +3933,7 @@ int main(int argc, const char **argv) {
             rebuild_mesh_if_needed();
             transform_all_vertices();
             draw_mesh(&ctx);
+            draw_dropped_items(&ctx);
             draw_pause_menu(&ctx);
             flip_buffers(&ctx);
             continue;
@@ -3646,6 +3951,7 @@ int main(int argc, const char **argv) {
         rebuild_mesh_if_needed();
         transform_all_vertices();
         draw_mesh(&ctx);
+        draw_dropped_items(&ctx);
         draw_breaking_overlay(&ctx);
         draw_crosshair(&ctx);
         draw_game_hud(&ctx);
