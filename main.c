@@ -28,6 +28,14 @@
 #define FOCAL_LENGTH 220
 #define NEAR_PLANE_Z 24
 #define FAR_PLANE_Z 900
+#define FOG_START_Z 260
+#define FOG_FULL_Z 780
+#define FOG_SKY_R 88
+#define FOG_SKY_G 104
+#define FOG_SKY_B 124
+#define SKY_R 48
+#define SKY_G 80
+#define SKY_B 130
 #define FRUSTUM_MARGIN_X 96
 #define FRUSTUM_MARGIN_Y 72
 
@@ -62,6 +70,29 @@
 #define PLAYER_COLLISION_RADIUS 36
 #define MAX_AUTO_DROP_BLOCKS 1
 
+#define HOTBAR_SLOT_COUNT 9
+#define HOTBAR_SLOT_SIZE 20
+#define HOTBAR_SLOT_GAP 2
+#define HOTBAR_TOTAL_W ((HOTBAR_SLOT_COUNT * HOTBAR_SLOT_SIZE) + ((HOTBAR_SLOT_COUNT - 1) * HOTBAR_SLOT_GAP))
+#define HOTBAR_START_X ((SCREEN_W - HOTBAR_TOTAL_W) / 2)
+#define HOTBAR_Y 212
+#define HEART_COUNT 10
+#define HEART_START_X 68
+#define HEART_Y 194
+
+#define INVENTORY_STORAGE_COLS 9
+#define INVENTORY_STORAGE_ROWS 3
+#define INVENTORY_STORAGE_SLOT_COUNT (INVENTORY_STORAGE_COLS * INVENTORY_STORAGE_ROWS)
+#define INVENTORY_TOTAL_SLOTS (INVENTORY_STORAGE_SLOT_COUNT + HOTBAR_SLOT_COUNT)
+#define INVENTORY_SLOT_SIZE 18
+#define INVENTORY_SLOT_GAP 2
+#define INVENTORY_STORAGE_START_X 70
+#define INVENTORY_STORAGE_START_Y 92
+#define INVENTORY_HOTBAR_START_X INVENTORY_STORAGE_START_X
+#define INVENTORY_HOTBAR_Y 158
+#define INVENTORY_CURSOR_STORAGE_START 0
+#define INVENTORY_CURSOR_HOTBAR_START INVENTORY_STORAGE_SLOT_COUNT
+
 #define PAD_BUFFER_SIZE 34
 
 #define FILE_MODE_READ 1
@@ -80,12 +111,14 @@
 #define MENU_OPTION_COUNT 2
 
 #define PAUSE_OPTION_RESUME 0
-#define PAUSE_OPTION_TOGGLE_FLY 1
-#define PAUSE_OPTION_TOGGLE_HUD 2
-#define PAUSE_OPTION_SAVE_GAME 3
-#define PAUSE_OPTION_LOAD_GAME 4
-#define PAUSE_OPTION_RETURN_MENU 5
-#define PAUSE_OPTION_COUNT 6
+#define PAUSE_OPTION_INVENTORY 1
+#define PAUSE_OPTION_TOGGLE_FLY 2
+#define PAUSE_OPTION_TOGGLE_HUD 3
+#define PAUSE_OPTION_TOGGLE_FOG 4
+#define PAUSE_OPTION_SAVE_GAME 5
+#define PAUSE_OPTION_LOAD_GAME 6
+#define PAUSE_OPTION_RETURN_MENU 7
+#define PAUSE_OPTION_COUNT 8
 
 typedef struct {
     DISPENV disp_env;
@@ -157,13 +190,16 @@ typedef struct {
 enum {
     APP_STATE_MENU = 0,
     APP_STATE_PLAY = 1,
-    APP_STATE_PAUSE = 2
+    APP_STATE_PAUSE = 2,
+    APP_STATE_INVENTORY = 3
 };
 
 enum {
     BLOCK_AIR = 0,
     BLOCK_DIRT = 1,
-    BLOCK_GRASS = 2
+    BLOCK_GRASS = 2,
+    BLOCK_STONE = 3,
+    BLOCK_SAND = 4
 };
 
 enum {
@@ -213,7 +249,61 @@ static int fly_mode_enabled = 0;
 static int app_state = APP_STATE_MENU;
 static int menu_selected_option = MENU_OPTION_NEW_GAME;
 static int pause_selected_option = PAUSE_OPTION_RESUME;
-static int hud_visible = 1;
+
+/*
+ * hud_visible controls only the small debug/help panel.
+ * The Minecraft-style hotbar and hearts are part of the game UI and stay visible.
+ */
+static int hud_visible = 0;
+static int fog_enabled = 0;
+static int selected_hotbar_slot = 0;
+static int player_health_hearts = HEART_COUNT;
+static int inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
+static uint8_t inventory_held_block = BLOCK_AIR;
+
+static uint8_t hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
+    BLOCK_DIRT,
+    BLOCK_STONE,
+    BLOCK_SAND,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR
+};
+
+static uint8_t inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
+    BLOCK_DIRT,
+    BLOCK_DIRT,
+    BLOCK_STONE,
+    BLOCK_STONE,
+    BLOCK_SAND,
+    BLOCK_SAND,
+    BLOCK_GRASS,
+    BLOCK_AIR,
+    BLOCK_AIR,
+
+    BLOCK_DIRT,
+    BLOCK_STONE,
+    BLOCK_SAND,
+    BLOCK_GRASS,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR,
+    BLOCK_AIR
+};
 
 static uint16_t pad_previous_buttons = 0;
 
@@ -596,6 +686,16 @@ static void tick_system_status(void) {
     }
 }
 
+static void update_clear_color_for_game(void) {
+    if (fog_enabled) {
+        setRGB0(&(ctx.buffers[0].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
+        setRGB0(&(ctx.buffers[1].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
+    } else {
+        setRGB0(&(ctx.buffers[0].draw_env), SKY_R, SKY_G, SKY_B);
+        setRGB0(&(ctx.buffers[1].draw_env), SKY_R, SKY_G, SKY_B);
+    }
+}
+
 static void init_memory_card(void) {
     /*
      * BIOS memory card driver init.
@@ -720,7 +820,9 @@ static void apply_save_data(const SaveData *save) {
             if (
                 block_edits[i].type != BLOCK_AIR &&
                 block_edits[i].type != BLOCK_DIRT &&
-                block_edits[i].type != BLOCK_GRASS
+                block_edits[i].type != BLOCK_GRASS &&
+                block_edits[i].type != BLOCK_STONE &&
+                block_edits[i].type != BLOCK_SAND
             ) {
                 block_edits[i].type = BLOCK_DIRT;
             }
@@ -1180,8 +1282,38 @@ static int block_intersects_player_footprint(int block_x, int block_y, int block
     return 1;
 }
 
+static int get_selected_hotbar_block_type(void) {
+    if (selected_hotbar_slot < 0 || selected_hotbar_slot >= HOTBAR_SLOT_COUNT) {
+        return BLOCK_AIR;
+    }
+
+    return hotbar_slot_blocks[selected_hotbar_slot];
+}
+
+static void select_previous_hotbar_slot(void) {
+    selected_hotbar_slot--;
+
+    if (selected_hotbar_slot < 0) {
+        selected_hotbar_slot = HOTBAR_SLOT_COUNT - 1;
+    }
+}
+
+static void select_next_hotbar_slot(void) {
+    selected_hotbar_slot++;
+
+    if (selected_hotbar_slot >= HOTBAR_SLOT_COUNT) {
+        selected_hotbar_slot = 0;
+    }
+}
+
 static void add_target_block(void) {
     const RaycastHit hit = raycast_block();
+    const int selected_block_type = get_selected_hotbar_block_type();
+
+    if (selected_block_type == BLOCK_AIR) {
+        set_system_status("EMPTY SLOT", 45);
+        return;
+    }
 
     if (!hit.found) {
         return;
@@ -1203,11 +1335,7 @@ static void add_target_block(void) {
         return;
     }
 
-    /*
-     * Placed block type for now.
-     * Later we can switch this to current hotbar/material.
-     */
-    set_block_type(hit.place_x, hit.place_y, hit.place_z, BLOCK_DIRT);
+    set_block_type(hit.place_x, hit.place_y, hit.place_z, selected_block_type);
 }
 
 static void update_input(void) {
@@ -1257,6 +1385,16 @@ static void update_input(void) {
 
     if (buttons & PAD_CROSS) {
         camera_pitch += CAMERA_PITCH_SPEED;
+    }
+
+    if (!fly_mode_enabled) {
+        if (pressed_this_frame & PAD_L2) {
+            select_previous_hotbar_slot();
+        }
+
+        if (pressed_this_frame & PAD_R2) {
+            select_next_hotbar_slot();
+        }
     }
 
     camera_pitch = clamp_int(
@@ -1536,6 +1674,48 @@ static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uin
         return;
     }
 
+    if (block_type == BLOCK_STONE) {
+        if (face == FACE_POS_Y) {
+            *r = 128;
+            *g = 130;
+            *b = 128;
+            return;
+        }
+
+        if (face == FACE_NEG_Y) {
+            *r = 58;
+            *g = 60;
+            *b = 58;
+            return;
+        }
+
+        *r = 100;
+        *g = 102;
+        *b = 100;
+        return;
+    }
+
+    if (block_type == BLOCK_SAND) {
+        if (face == FACE_POS_Y) {
+            *r = 218;
+            *g = 202;
+            *b = 118;
+            return;
+        }
+
+        if (face == FACE_NEG_Y) {
+            *r = 118;
+            *g = 102;
+            *b = 58;
+            return;
+        }
+
+        *r = 184;
+        *g = 166;
+        *b = 92;
+        return;
+    }
+
     *r = 180;
     *g = 180;
     *b = 180;
@@ -1810,6 +1990,44 @@ static int depth_to_ot(int depth) {
     return ot_z;
 }
 
+static uint8_t fog_blend_channel(uint8_t color, uint8_t fog_color, int fog_amount) {
+    const int color_part = ((int)color * (256 - fog_amount));
+    const int fog_part = ((int)fog_color * fog_amount);
+
+    return (uint8_t)((color_part + fog_part) >> 8);
+}
+
+static void apply_distance_fog(
+    int depth,
+    uint8_t *r,
+    uint8_t *g,
+    uint8_t *b
+) {
+    int fog_amount;
+
+    if (!fog_enabled) {
+        return;
+    }
+
+    if (depth <= FOG_START_Z) {
+        return;
+    }
+
+    if (depth >= FOG_FULL_Z) {
+        fog_amount = 256;
+    } else {
+        fog_amount = ((depth - FOG_START_Z) * 256) / (FOG_FULL_Z - FOG_START_Z);
+    }
+
+    /*
+     * Classic PS1 fog: distant polygons are simply recolored toward the
+     * background. No screen-space stripes, no alpha, no texture.
+     */
+    *r = fog_blend_channel(*r, FOG_SKY_R, fog_amount);
+    *g = fog_blend_channel(*g, FOG_SKY_G, fog_amount);
+    *b = fog_blend_channel(*b, FOG_SKY_B, fog_amount);
+}
+
 static Vec3i intersect_near_plane(const Vec3i *a, const Vec3i *b) {
     Vec3i result;
 
@@ -1929,14 +2147,20 @@ static void draw_camera_triangle_clipped(
     int depth = triangle_depth(&(clipped[0]), &(clipped[1]), &(clipped[2]));
     int ot_z = depth_to_ot(depth);
 
+    uint8_t fogged_r = r;
+    uint8_t fogged_g = g;
+    uint8_t fogged_b = b_col;
+
+    apply_distance_fog(depth, &fogged_r, &fogged_g, &fogged_b);
+
     draw_projected_triangle(
         context,
         &p0,
         &p1,
         &p2,
-        r,
-        g,
-        b_col,
+        fogged_r,
+        fogged_g,
+        fogged_b,
         ot_z
     );
 
@@ -1946,14 +2170,20 @@ static void draw_camera_triangle_clipped(
         depth = triangle_depth(&(clipped[0]), &(clipped[2]), &(clipped[3]));
         ot_z = depth_to_ot(depth);
 
+        fogged_r = r;
+        fogged_g = g;
+        fogged_b = b_col;
+
+        apply_distance_fog(depth, &fogged_r, &fogged_g, &fogged_b);
+
         draw_projected_triangle(
             context,
             &p0,
             &p2,
             &p3,
-            r,
-            g,
-            b_col,
+            fogged_r,
+            fogged_g,
+            fogged_b,
             ot_z
         );
     }
@@ -2266,30 +2496,315 @@ static void draw_pause_option(
         draw_text(context, x + 30, y + 5, 0, label);
     }
 }
-static void draw_game_hud(RenderContext *context) {
-    if (!hud_visible) {
-        if (system_status_timer > 0) {
-            draw_minecraft_button(context, 8, 8, 104, 18, 0);
-            draw_text(context, 18, 12, 0, system_status_text);
-        }
-
-        return;
+static int block_type_to_icon_texture(int block_type) {
+    if (block_type == BLOCK_DIRT) {
+        return 1;
     }
 
-    draw_panel(context, 6, 8, 142, 64, 2, 32, 36, 42, 174, 174, 174);
-    draw_text(context, 16, 18, 0, "MINECRAFT PS1");
-    draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
-    draw_text(context, 16, 50, 0, "START MENU  SELECT SAVE");
+    if (block_type == BLOCK_STONE) {
+        return 2;
+    }
+
+    if (block_type == BLOCK_SAND) {
+        return 6;
+    }
+
+    if (block_type == BLOCK_GRASS) {
+        return 0;
+    }
+
+    return -1;
+}
+
+static void draw_hotbar_slot(RenderContext *context, int slot_index, int selected) {
+    const int x = HOTBAR_START_X + (slot_index * (HOTBAR_SLOT_SIZE + HOTBAR_SLOT_GAP));
+    const int y = HOTBAR_Y;
+    const int block_type = hotbar_slot_blocks[slot_index];
+    const int texture_type = block_type_to_icon_texture(block_type);
+
+    if (selected) {
+        draw_filled_rect(context, x - 2, y - 2, HOTBAR_SLOT_SIZE + 4, HOTBAR_SLOT_SIZE + 4, 2, 238, 238, 238);
+        draw_filled_rect(context, x, y, HOTBAR_SLOT_SIZE, HOTBAR_SLOT_SIZE, 1, 92, 92, 92);
+    } else {
+        draw_filled_rect(context, x, y, HOTBAR_SLOT_SIZE, HOTBAR_SLOT_SIZE, 2, 42, 42, 42);
+        draw_filled_rect(context, x + 2, y + 2, HOTBAR_SLOT_SIZE - 4, HOTBAR_SLOT_SIZE - 4, 1, 78, 78, 78);
+    }
+
+    draw_line(context, x, y, x + HOTBAR_SLOT_SIZE - 1, y, 0, 210, 210, 210);
+    draw_line(context, x, y, x, y + HOTBAR_SLOT_SIZE - 1, 0, 210, 210, 210);
+    draw_line(context, x + HOTBAR_SLOT_SIZE - 1, y, x + HOTBAR_SLOT_SIZE - 1, y + HOTBAR_SLOT_SIZE - 1, 0, 18, 18, 18);
+    draw_line(context, x, y + HOTBAR_SLOT_SIZE - 1, x + HOTBAR_SLOT_SIZE - 1, y + HOTBAR_SLOT_SIZE - 1, 0, 18, 18, 18);
+
+    if (texture_type >= 0) {
+        draw_minecraft_texture_block(
+            context,
+            x + 4,
+            y + 4,
+            HOTBAR_SLOT_SIZE - 8,
+            texture_type,
+            0,
+            200 + slot_index
+        );
+    }
+}
+
+static void draw_hotbar(RenderContext *context) {
+    for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+        draw_hotbar_slot(context, i, i == selected_hotbar_slot);
+    }
+}
+
+static void draw_heart(RenderContext *context, int x, int y, int filled) {
+    if (filled) {
+        draw_filled_rect(context, x + 2, y, 4, 4, 0, 210, 32, 42);
+        draw_filled_rect(context, x + 8, y, 4, 4, 0, 210, 32, 42);
+        draw_filled_rect(context, x, y + 3, 14, 5, 0, 210, 32, 42);
+        draw_filled_rect(context, x + 2, y + 8, 10, 3, 0, 210, 32, 42);
+        draw_filled_rect(context, x + 5, y + 11, 4, 3, 0, 210, 32, 42);
+
+        draw_filled_rect(context, x + 3, y + 2, 2, 2, 0, 255, 118, 118);
+        draw_line(context, x, y + 4, x + 13, y + 4, 0, 128, 18, 26);
+    } else {
+        draw_line(context, x + 2, y, x + 5, y, 0, 80, 22, 26);
+        draw_line(context, x + 8, y, x + 11, y, 0, 80, 22, 26);
+        draw_line(context, x, y + 4, x + 13, y + 4, 0, 80, 22, 26);
+        draw_line(context, x + 2, y + 8, x + 11, y + 8, 0, 80, 22, 26);
+        draw_line(context, x + 5, y + 12, x + 8, y + 12, 0, 80, 22, 26);
+    }
+}
+
+static void draw_hearts(RenderContext *context) {
+    for (int i = 0; i < HEART_COUNT; i++) {
+        draw_heart(
+            context,
+            HEART_START_X + (i * 18),
+            HEART_Y,
+            i < player_health_hearts
+        );
+    }
+}
+
+static uint8_t *get_inventory_cursor_block_ptr(void) {
+    if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
+        return &(inventory_storage_blocks[inventory_cursor_slot]);
+    }
+
+    return &(hotbar_slot_blocks[inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT]);
+}
+
+static void move_inventory_cursor(int dx, int dy) {
+    int row;
+    int col;
+
+    if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
+        row = inventory_cursor_slot / INVENTORY_STORAGE_COLS;
+        col = inventory_cursor_slot % INVENTORY_STORAGE_COLS;
+    } else {
+        row = INVENTORY_STORAGE_ROWS;
+        col = inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT;
+    }
+
+    col += dx;
+    row += dy;
+
+    if (col < 0) {
+        col = INVENTORY_STORAGE_COLS - 1;
+    }
+
+    if (col >= INVENTORY_STORAGE_COLS) {
+        col = 0;
+    }
+
+    if (row < 0) {
+        row = INVENTORY_STORAGE_ROWS;
+    }
+
+    if (row > INVENTORY_STORAGE_ROWS) {
+        row = 0;
+    }
+
+    if (row < INVENTORY_STORAGE_ROWS) {
+        inventory_cursor_slot = (row * INVENTORY_STORAGE_COLS) + col;
+    } else {
+        inventory_cursor_slot = INVENTORY_STORAGE_SLOT_COUNT + col;
+    }
+}
+
+static void swap_inventory_held_with_cursor(void) {
+    uint8_t *slot = get_inventory_cursor_block_ptr();
+    const uint8_t previous = *slot;
+
+    *slot = inventory_held_block;
+    inventory_held_block = previous;
+
+    set_system_status(inventory_held_block == BLOCK_AIR ? "HAND EMPTY" : "ITEM HELD", 45);
+}
+
+static void quick_move_inventory_slot_to_hotbar(void) {
+    uint8_t *slot = get_inventory_cursor_block_ptr();
+    uint8_t *target = &(hotbar_slot_blocks[selected_hotbar_slot]);
+    const uint8_t previous = *target;
+
+    *target = *slot;
+    *slot = previous;
+
+    set_system_status("MOVED TO HOTBAR", 55);
+}
+
+static void draw_inventory_slot(
+    RenderContext *context,
+    int x,
+    int y,
+    uint8_t block_type,
+    int selected,
+    int disabled,
+    int seed
+) {
+    const int texture_type = block_type_to_icon_texture(block_type);
+
+    if (selected) {
+        draw_filled_rect(context, x - 2, y - 2, INVENTORY_SLOT_SIZE + 4, INVENTORY_SLOT_SIZE + 4, 1, 244, 244, 244);
+    }
+
+    if (disabled) {
+        draw_filled_rect(context, x, y, INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE, 3, 46, 46, 50);
+        draw_filled_rect(context, x + 2, y + 2, INVENTORY_SLOT_SIZE - 4, INVENTORY_SLOT_SIZE - 4, 2, 36, 36, 40);
+    } else {
+        draw_filled_rect(context, x, y, INVENTORY_SLOT_SIZE, INVENTORY_SLOT_SIZE, 3, 66, 66, 70);
+        draw_filled_rect(context, x + 2, y + 2, INVENTORY_SLOT_SIZE - 4, INVENTORY_SLOT_SIZE - 4, 2, 42, 42, 46);
+    }
+
+    draw_line(context, x, y, x + INVENTORY_SLOT_SIZE - 1, y, 0, 198, 198, 198);
+    draw_line(context, x, y, x, y + INVENTORY_SLOT_SIZE - 1, 0, 198, 198, 198);
+    draw_line(context, x + INVENTORY_SLOT_SIZE - 1, y, x + INVENTORY_SLOT_SIZE - 1, y + INVENTORY_SLOT_SIZE - 1, 0, 22, 22, 22);
+    draw_line(context, x, y + INVENTORY_SLOT_SIZE - 1, x + INVENTORY_SLOT_SIZE - 1, y + INVENTORY_SLOT_SIZE - 1, 0, 22, 22, 22);
+
+    if (texture_type >= 0) {
+        draw_minecraft_texture_block(
+            context,
+            x + 3,
+            y + 3,
+            INVENTORY_SLOT_SIZE - 6,
+            texture_type,
+            0,
+            seed
+        );
+    }
+}
+
+static void draw_inventory_grid(RenderContext *context) {
+    for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
+        const int row = i / INVENTORY_STORAGE_COLS;
+        const int col = i % INVENTORY_STORAGE_COLS;
+        const int x = INVENTORY_STORAGE_START_X + (col * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP));
+        const int y = INVENTORY_STORAGE_START_Y + (row * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP));
+
+        draw_inventory_slot(
+            context,
+            x,
+            y,
+            inventory_storage_blocks[i],
+            inventory_cursor_slot == i,
+            0,
+            300 + i
+        );
+    }
+
+    for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+        const int x = INVENTORY_HOTBAR_START_X + (i * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP));
+        const int y = INVENTORY_HOTBAR_Y;
+        const int cursor_index = INVENTORY_CURSOR_HOTBAR_START + i;
+
+        draw_inventory_slot(
+            context,
+            x,
+            y,
+            hotbar_slot_blocks[i],
+            inventory_cursor_slot == cursor_index,
+            0,
+            500 + i
+        );
+    }
+}
+
+static void draw_inventory_crafting_area(RenderContext *context) {
+    draw_text(context, 190, 48, 0, "CRAFTING");
+
+    draw_inventory_slot(context, 190, 64, BLOCK_AIR, 0, 1, 600);
+    draw_inventory_slot(context, 210, 64, BLOCK_AIR, 0, 1, 601);
+    draw_inventory_slot(context, 190, 84, BLOCK_AIR, 0, 1, 602);
+    draw_inventory_slot(context, 210, 84, BLOCK_AIR, 0, 1, 603);
+
+    draw_text(context, 234, 75, 0, ">");
+    draw_inventory_slot(context, 250, 74, BLOCK_AIR, 0, 1, 604);
+}
+
+static void draw_inventory_armor_area(RenderContext *context) {
+    draw_text(context, 26, 42, 0, "ARMOR");
+    draw_inventory_slot(context, 28, 58, BLOCK_AIR, 0, 1, 700);
+    draw_inventory_slot(context, 28, 78, BLOCK_AIR, 0, 1, 701);
+    draw_inventory_slot(context, 28, 98, BLOCK_AIR, 0, 1, 702);
+    draw_inventory_slot(context, 28, 118, BLOCK_AIR, 0, 1, 703);
+}
+
+static void draw_inventory_player_preview(RenderContext *context) {
+    draw_panel(context, 74, 40, 84, 44, 2, 42, 50, 60, 174, 174, 174);
+    draw_minecraft_texture_block(context, 84, 50, 18, 0, 1, 740);
+    draw_minecraft_texture_block(context, 104, 50, 18, 1, 1, 741);
+    draw_minecraft_texture_block(context, 124, 50, 18, 2, 1, 742);
+    draw_text(context, 82, 72, 0, "BLOCK PLAYER");
+}
+
+static void draw_inventory_screen(RenderContext *context) {
+    draw_filled_rect(context, 0, 0, SCREEN_W, SCREEN_H, 7, 16, 16, 20);
+    draw_panel(context, 16, 16, 288, 206, 4, 88, 88, 88, 214, 214, 214);
+
+    draw_text(context, 124, 24, 0, "INVENTORY");
+
+    draw_inventory_armor_area(context);
+    draw_inventory_player_preview(context);
+    draw_inventory_crafting_area(context);
+
+    draw_text(context, 70, 82, 0, "STORAGE");
+    draw_inventory_grid(context);
+
+    draw_text(context, 70, 182, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP");
+    draw_text(context, 70, 196, 0, "SQUARE TO SELECTED HOTBAR  START BACK");
+
+    if (inventory_held_block != BLOCK_AIR) {
+        const int texture_type = block_type_to_icon_texture(inventory_held_block);
+
+        draw_text(context, 214, 182, 0, "HAND");
+        draw_inventory_slot(context, 256, 178, inventory_held_block, 1, 0, 800 + texture_type);
+    }
 
     if (system_status_timer > 0) {
-        draw_minecraft_button(context, 8, 80, 112, 18, 0);
-        draw_text(context, 18, 84, 0, system_status_text);
+        draw_minecraft_button(context, 104, 224, 112, 16, 0);
+        draw_text(context, 122, 226, 0, system_status_text);
+    }
+}
+
+static void draw_game_hud(RenderContext *context) {
+    draw_hearts(context);
+    draw_hotbar(context);
+
+    if (hud_visible) {
+        draw_panel(context, 6, 8, 148, 64, 2, 32, 36, 42, 174, 174, 174);
+        draw_text(context, 16, 18, 0, "MINECRAFT PS1");
+        draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
+        draw_text(context, 16, 50, 0, fog_enabled ? "FOG ON  L2/R2 SLOT" : "FOG OFF L2/R2 SLOT");
+    }
+
+    if (system_status_timer > 0) {
+        draw_minecraft_button(context, 8, hud_visible ? 80 : 8, 112, 18, 0);
+        draw_text(context, 18, hud_visible ? 84 : 12, 0, system_status_text);
     }
 }
 static void start_new_game(void) {
     reset_world_edits();
     reset_camera();
     pause_selected_option = PAUSE_OPTION_RESUME;
+    selected_hotbar_slot = 0;
 
     app_state = APP_STATE_PLAY;
     set_system_status("NEW GAME", 90);
@@ -2384,6 +2899,12 @@ static void update_pause_input(void) {
                 app_state = APP_STATE_PLAY;
                 break;
 
+            case PAUSE_OPTION_INVENTORY:
+                app_state = APP_STATE_INVENTORY;
+                inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
+                set_system_status("INVENTORY", 45);
+                break;
+
             case PAUSE_OPTION_TOGGLE_FLY:
                 fly_mode_enabled = !fly_mode_enabled;
 
@@ -2399,9 +2920,20 @@ static void update_pause_input(void) {
                 hud_visible = !hud_visible;
 
                 if (hud_visible) {
-                    set_system_status("HUD ON", 90);
+                    set_system_status("HELP HUD ON", 90);
                 } else {
-                    set_system_status("HUD OFF", 90);
+                    set_system_status("HELP HUD OFF", 90);
+                }
+                break;
+
+            case PAUSE_OPTION_TOGGLE_FOG:
+                fog_enabled = !fog_enabled;
+                update_clear_color_for_game();
+
+                if (fog_enabled) {
+                    set_system_status("FOG ON", 90);
+                } else {
+                    set_system_status("FOG OFF", 90);
                 }
                 break;
 
@@ -2434,6 +2966,46 @@ static void update_pause_input(void) {
 
     pad_previous_buttons = buttons;
 }
+static void update_inventory_input(void) {
+    const uint16_t buttons = read_pad_buttons();
+    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+
+    if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
+        app_state = APP_STATE_PLAY;
+        pad_previous_buttons = buttons;
+        return;
+    }
+
+    if (pressed_this_frame & PAD_UP) {
+        move_inventory_cursor(0, -1);
+    }
+
+    if (pressed_this_frame & PAD_DOWN) {
+        move_inventory_cursor(0, 1);
+    }
+
+    if (pressed_this_frame & PAD_LEFT) {
+        move_inventory_cursor(-1, 0);
+    }
+
+    if (pressed_this_frame & PAD_RIGHT) {
+        move_inventory_cursor(1, 0);
+    }
+
+    if (
+        (pressed_this_frame & PAD_CROSS) ||
+        (pressed_this_frame & PAD_CIRCLE)
+    ) {
+        swap_inventory_held_with_cursor();
+    }
+
+    if (pressed_this_frame & PAD_SQUARE) {
+        quick_move_inventory_slot_to_hotbar();
+    }
+
+    pad_previous_buttons = buttons;
+}
+
 static void draw_menu(RenderContext *context) {
     draw_menu_background(context);
 
@@ -2476,12 +3048,12 @@ static void draw_pause_menu(RenderContext *context) {
     draw_minecraft_texture_block(context, 264, 20, 16, 0, 6, 104);
     draw_minecraft_texture_block(context, 280, 20, 16, 0, 6, 105);
 
-    draw_text(context, 122, 28, 0, "GAME MENU");
+    draw_text(context, 122, 24, 0, "GAME MENU");
 
     draw_pause_option(
         context,
         78,
-        52,
+        36,
         164,
         "BACK TO GAME",
         pause_selected_option == PAUSE_OPTION_RESUME
@@ -2489,7 +3061,15 @@ static void draw_pause_menu(RenderContext *context) {
     draw_pause_option(
         context,
         78,
-        76,
+        58,
+        164,
+        "INVENTORY",
+        pause_selected_option == PAUSE_OPTION_INVENTORY
+    );
+    draw_pause_option(
+        context,
+        78,
+        80,
         164,
         fly_mode_enabled ? "SWITCH TO WALK" : "SWITCH TO FLY",
         pause_selected_option == PAUSE_OPTION_TOGGLE_FLY
@@ -2497,9 +3077,9 @@ static void draw_pause_menu(RenderContext *context) {
     draw_pause_option(
         context,
         78,
-        100,
+        102,
         164,
-        hud_visible ? "HIDE HUD" : "SHOW HUD",
+        hud_visible ? "HELP HUD: ON" : "HELP HUD: OFF",
         pause_selected_option == PAUSE_OPTION_TOGGLE_HUD
     );
     draw_pause_option(
@@ -2507,13 +3087,21 @@ static void draw_pause_menu(RenderContext *context) {
         78,
         124,
         164,
+        fog_enabled ? "FOG: ON" : "FOG: OFF",
+        pause_selected_option == PAUSE_OPTION_TOGGLE_FOG
+    );
+    draw_pause_option(
+        context,
+        78,
+        146,
+        164,
         "SAVE GAME",
         pause_selected_option == PAUSE_OPTION_SAVE_GAME
     );
     draw_pause_option(
         context,
         78,
-        148,
+        168,
         164,
         "LOAD GAME",
         pause_selected_option == PAUSE_OPTION_LOAD_GAME
@@ -2521,14 +3109,14 @@ static void draw_pause_menu(RenderContext *context) {
     draw_pause_option(
         context,
         78,
-        172,
+        190,
         164,
         "MAIN MENU",
         pause_selected_option == PAUSE_OPTION_RETURN_MENU
     );
 
-    draw_text(context, 74, 205, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
-    draw_text(context, 86, 220, 0, "START/TRIANGLE BACK");
+    draw_text(context, 74, 216, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
+    draw_text(context, 86, 228, 0, "START/TRIANGLE BACK");
 
     if (system_status_timer > 0) {
         draw_minecraft_button(context, 104, 4, 112, 18, 0);
@@ -2545,7 +3133,7 @@ int main(int argc, const char **argv) {
     /*
      * Sky-ish background.
      */
-    setup_context(&ctx, SCREEN_W, SCREEN_H, 48, 80, 130);
+    setup_context(&ctx, SCREEN_W, SCREEN_H, SKY_R, SKY_G, SKY_B);
     init_input();
     init_memory_card();
 
@@ -2555,6 +3143,7 @@ int main(int argc, const char **argv) {
 
     for (;;) {
         tick_system_status();
+        update_clear_color_for_game();
 
         if (app_state == APP_STATE_MENU) {
             update_menu_input();
@@ -2569,6 +3158,13 @@ int main(int argc, const char **argv) {
             transform_all_vertices();
             draw_mesh(&ctx);
             draw_pause_menu(&ctx);
+            flip_buffers(&ctx);
+            continue;
+        }
+
+        if (app_state == APP_STATE_INVENTORY) {
+            update_inventory_input();
+            draw_inventory_screen(&ctx);
             flip_buffers(&ctx);
             continue;
         }
