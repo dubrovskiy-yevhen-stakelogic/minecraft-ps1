@@ -27,6 +27,7 @@
 
 #define FOCAL_LENGTH 220
 #define NEAR_PLANE_Z 24
+#define TEXTURED_LOG_MIN_Z 8
 #define FAR_PLANE_Z 900
 #define FOG_START_Z 260
 #define FOG_FULL_Z 780
@@ -116,6 +117,15 @@
 #define PICKUP_DISTANCE_XZ 42
 #define PICKUP_DISTANCE_Y 90
 
+#define TEXTURE_ATLAS_X 640
+#define TEXTURE_ATLAS_Y 0
+#define TEXTURE_ATLAS_W 32
+#define TEXTURE_ATLAS_H 16
+#define LOG_SIDE_U 0
+#define LOG_TOP_U 16
+#define LOG_TILE_V 0
+#define LOG_TILE_SIZE 16
+
 #define PAD_BUFFER_SIZE 34
 
 #define FILE_MODE_READ 1
@@ -175,6 +185,9 @@ typedef struct {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+
+    uint8_t block_type;
+    uint8_t face_type;
 } MeshFace;
 
 typedef struct {
@@ -255,6 +268,35 @@ enum {
     FACE_POS_X = 3,
     FACE_NEG_Y = 4,
     FACE_POS_Y = 5
+};
+
+/*
+ * Real PS1 texture atlas.
+ * Extracted from uploaded terrain sprite:
+ * row 2, tile 5 = log side
+ * row 2, tile 6 = log top/bottom
+ *
+ * Atlas layout, 16bpp:
+ * u 00..15 = log side
+ * u 16..31 = log top
+ */
+static const uint16_t terrain_log_atlas_16bpp[TEXTURE_ATLAS_H][TEXTURE_ATLAS_W] = {
+    { 0x10e8, 0x194d, 0x194d, 0x25f3, 0x0cc7, 0x196d, 0x21d2, 0x10c8, 0x194c, 0x194d, 0x194c, 0x1d8f, 0x196d, 0x1d8f, 0x194d, 0x25f3, 0x194d, 0x194d, 0x0ca7, 0x194d, 0x194d, 0x194c, 0x0ca7, 0x0ca7, 0x0ca7, 0x194d, 0x194d, 0x0ca7, 0x1d6d, 0x194d, 0x194d, 0x196d },
+    { 0x0cc7, 0x154c, 0x1d6d, 0x0ca7, 0x0cc7, 0x25f3, 0x10c8, 0x194c, 0x25f3, 0x0cc7, 0x194d, 0x25f3, 0x10e9, 0x1d8f, 0x10e9, 0x21d2, 0x194d, 0x2e56, 0x2a36, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2a35, 0x2a36, 0x2e56, 0x2e56, 0x2e57, 0x3257, 0x2e56, 0x152c },
+    { 0x0ca7, 0x152b, 0x152c, 0x10c8, 0x194d, 0x25f3, 0x0cc7, 0x194c, 0x25f3, 0x0ca7, 0x194c, 0x1d8f, 0x10e9, 0x1d8f, 0x10e9, 0x25f3, 0x0ca7, 0x2e56, 0x2613, 0x2613, 0x2613, 0x21f2, 0x2613, 0x2613, 0x2a34, 0x2613, 0x2613, 0x2613, 0x2613, 0x2a14, 0x2e56, 0x194d },
+    { 0x196d, 0x10e8, 0x152c, 0x10c8, 0x1d8f, 0x1d8f, 0x0cc7, 0x194d, 0x25f3, 0x0ca7, 0x194d, 0x25f3, 0x0cc7, 0x25f3, 0x10c8, 0x1d8f, 0x194d, 0x2e56, 0x2a34, 0x2e56, 0x3277, 0x3277, 0x3277, 0x3277, 0x3277, 0x2e57, 0x3277, 0x2e57, 0x3277, 0x2613, 0x2e56, 0x0ca7 },
+    { 0x194d, 0x10c8, 0x194d, 0x194c, 0x1d8f, 0x1d8f, 0x194d, 0x194c, 0x1d6d, 0x10c8, 0x194d, 0x25f3, 0x0cc7, 0x25f3, 0x0ca7, 0x1d8f, 0x10e9, 0x2e36, 0x2613, 0x3277, 0x2e56, 0x2e57, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2e57, 0x3277, 0x2613, 0x2e56, 0x194d },
+    { 0x194d, 0x152b, 0x194d, 0x194c, 0x25f3, 0x194d, 0x194c, 0x194d, 0x194d, 0x0cc7, 0x194d, 0x21b1, 0x0cc7, 0x1d8f, 0x10c8, 0x194c, 0x0ca7, 0x2e56, 0x2613, 0x3277, 0x2e56, 0x2613, 0x2a34, 0x2a34, 0x2613, 0x2613, 0x2613, 0x2e56, 0x2e57, 0x2613, 0x2e56, 0x194d },
+    { 0x194d, 0x1d8f, 0x10e9, 0x194d, 0x25d2, 0x152c, 0x194d, 0x0ca7, 0x21d2, 0x0ca7, 0x1d8f, 0x150b, 0x08a6, 0x1d8f, 0x0cc7, 0x1d6d, 0x0ca7, 0x2e56, 0x2613, 0x3257, 0x2e56, 0x2613, 0x3257, 0x3257, 0x3277, 0x3277, 0x2613, 0x2e56, 0x2e57, 0x2613, 0x2e56, 0x0ca7 },
+    { 0x194d, 0x25f3, 0x0cc7, 0x194d, 0x25f3, 0x0cc7, 0x25f3, 0x10c8, 0x25f3, 0x0ca7, 0x1d8f, 0x10e9, 0x194c, 0x1d8f, 0x0cc7, 0x1d6d, 0x0ca7, 0x2e56, 0x2613, 0x3699, 0x2e56, 0x2613, 0x3277, 0x2e56, 0x2e56, 0x3257, 0x2614, 0x2a35, 0x3277, 0x2613, 0x2e56, 0x1d6e },
+    { 0x194d, 0x25f3, 0x0cc7, 0x1d6e, 0x21d2, 0x10c8, 0x194d, 0x10c8, 0x194d, 0x10c8, 0x21d2, 0x0ca7, 0x194d, 0x194d, 0x0cc7, 0x1d8f, 0x194d, 0x2e56, 0x2e55, 0x3277, 0x2e56, 0x2613, 0x3257, 0x2e56, 0x2e56, 0x3277, 0x2613, 0x2e56, 0x3277, 0x2613, 0x2e57, 0x194d },
+    { 0x194d, 0x25f3, 0x10e8, 0x194c, 0x196d, 0x21d2, 0x10c8, 0x194d, 0x194d, 0x0ca7, 0x21d2, 0x10c8, 0x194d, 0x21d2, 0x10c8, 0x1d8f, 0x194d, 0x2e56, 0x2613, 0x3277, 0x2e36, 0x25f3, 0x3277, 0x3277, 0x3277, 0x3277, 0x2613, 0x2e56, 0x3277, 0x2613, 0x2e56, 0x194d },
+    { 0x10e8, 0x1d8f, 0x10c8, 0x194d, 0x194c, 0x21d2, 0x0ca7, 0x152c, 0x0cc7, 0x152b, 0x29f3, 0x10c8, 0x194d, 0x25f3, 0x10c8, 0x21d2, 0x194c, 0x2a36, 0x2613, 0x2e56, 0x2e56, 0x2613, 0x2613, 0x2613, 0x2613, 0x2613, 0x2613, 0x2e57, 0x3277, 0x2613, 0x2e56, 0x194d },
+    { 0x0cc7, 0x1d8f, 0x0cc7, 0x194c, 0x1d6d, 0x25f3, 0x10c8, 0x25f3, 0x0ca7, 0x152b, 0x25f3, 0x0cc7, 0x194d, 0x25d2, 0x0ca7, 0x25f3, 0x0ca7, 0x2e36, 0x2613, 0x3277, 0x2e36, 0x2e56, 0x2e56, 0x2e36, 0x2e56, 0x2e56, 0x2e56, 0x2e57, 0x3277, 0x2a34, 0x2e56, 0x154c },
+    { 0x0ca7, 0x25f3, 0x0ca7, 0x194c, 0x194d, 0x25f3, 0x0ca7, 0x194d, 0x0cc7, 0x154c, 0x25d2, 0x0ca7, 0x194d, 0x152c, 0x10c8, 0x25f3, 0x0ca7, 0x2e56, 0x2613, 0x3277, 0x3277, 0x2e56, 0x3257, 0x3277, 0x3277, 0x3277, 0x3277, 0x3277, 0x3257, 0x2613, 0x2e56, 0x0ca7 },
+    { 0x10c8, 0x196d, 0x152b, 0x194d, 0x194d, 0x1d8f, 0x10e9, 0x1d6d, 0x196d, 0x152c, 0x194c, 0x0cc7, 0x194d, 0x21d2, 0x25f3, 0x0ca7, 0x0ca7, 0x2e56, 0x21f3, 0x2613, 0x2a34, 0x2613, 0x2613, 0x2613, 0x25f3, 0x2614, 0x2613, 0x2a34, 0x2a34, 0x2a34, 0x2e36, 0x0ca7 },
+    { 0x0ca7, 0x194c, 0x25d2, 0x10c8, 0x194d, 0x1d8f, 0x10e9, 0x0cc7, 0x21d2, 0x194d, 0x25f3, 0x0ca7, 0x154c, 0x1d8f, 0x0cc7, 0x194c, 0x10e9, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x2a35, 0x2a35, 0x2e56, 0x2e56, 0x2a15, 0x2e56, 0x2e56, 0x2e56, 0x2e56, 0x194d },
+    { 0x152b, 0x194d, 0x1d8f, 0x0cc7, 0x152c, 0x194d, 0x194d, 0x10c8, 0x194d, 0x194d, 0x194c, 0x08a6, 0x194c, 0x194d, 0x154c, 0x1d8f, 0x194d, 0x1d6d, 0x0ca7, 0x194d, 0x194d, 0x194d, 0x0ca7, 0x194d, 0x194d, 0x194d, 0x194d, 0x194d, 0x0ca7, 0x0ca7, 0x0ca7, 0x194d },
 };
 
 static RenderContext ctx;
@@ -615,6 +657,21 @@ static void setup_context(RenderContext *context, int w, int h, int r, int g, in
     ClearOTagR(context->buffers[0].ot, OT_LENGTH);
 
     SetDispMask(1);
+}
+
+static void upload_texture_assets(void) {
+    RECT atlas_rect;
+
+    setRECT(
+        &atlas_rect,
+        TEXTURE_ATLAS_X,
+        TEXTURE_ATLAS_Y,
+        TEXTURE_ATLAS_W,
+        TEXTURE_ATLAS_H
+    );
+
+    LoadImage(&atlas_rect, (uint32_t *)terrain_log_atlas_16bpp);
+    DrawSync(0);
 }
 
 static void flip_buffers(RenderContext *context) {
@@ -2265,7 +2322,9 @@ static void push_face_by_grid_vertices(
     int start_world_z,
     uint8_t r,
     uint8_t g,
-    uint8_t b
+    uint8_t b,
+    uint8_t block_type,
+    uint8_t face_type
 ) {
     if (mesh_face_count >= MAX_MESH_FACES) {
         return;
@@ -2298,6 +2357,8 @@ static void push_face_by_grid_vertices(
     face->r = r;
     face->g = g;
     face->b = b;
+    face->block_type = block_type;
+    face->face_type = face_type;
 
     mesh_face_count++;
 }
@@ -2481,7 +2542,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
 
@@ -2495,7 +2558,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
 
@@ -2509,7 +2574,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
 
@@ -2523,7 +2590,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
 
@@ -2537,7 +2606,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
 
@@ -2552,7 +2623,9 @@ static void push_block_face(
                 start_world_z,
                 r,
                 g,
-                b_col
+                b_col,
+                (uint8_t)block_type,
+                (uint8_t)face
             );
             break;
     }
@@ -2980,6 +3053,139 @@ static int face_is_outside_frustum(const MeshFace *face) {
     );
 }
 
+
+static int face_is_safe_for_textured_quad(
+    const Vec3i *v0,
+    const Vec3i *v1,
+    const Vec3i *v2,
+    const Vec3i *v3
+) {
+    /*
+     * Keep log texture visible when the player stands right next to the block.
+     * project_camera_vertex() already clamps projection to NEAR_PLANE_Z, so we
+     * only need to reject faces that are almost on/behind the camera.
+     */
+    return (
+        v0->z > TEXTURED_LOG_MIN_Z &&
+        v1->z > TEXTURED_LOG_MIN_Z &&
+        v2->z > TEXTURED_LOG_MIN_Z &&
+        v3->z > TEXTURED_LOG_MIN_Z
+    );
+}
+
+static int log_face_texture_u(int face_type) {
+    if (face_type == FACE_POS_Y || face_type == FACE_NEG_Y) {
+        return LOG_TOP_U;
+    }
+
+    return LOG_SIDE_U;
+}
+
+static void draw_projected_textured_triangle(
+    RenderContext *context,
+    const ProjectedVertex *a,
+    const ProjectedVertex *b,
+    const ProjectedVertex *c,
+    int u0,
+    int v0,
+    int u1,
+    int v1,
+    int u2,
+    int v2,
+    int ot_z
+) {
+    POLY_FT3 *poly = (POLY_FT3 *)new_primitive(context, ot_z, sizeof(POLY_FT3));
+
+    setPolyFT3(poly);
+    setRGB0(poly, 128, 128, 128);
+
+    setXY3(
+        poly,
+        a->x, a->y,
+        b->x, b->y,
+        c->x, c->y
+    );
+
+    setUV3(
+        poly,
+        u0, v0,
+        u1, v1,
+        u2, v2
+    );
+
+    setTPage(poly, 2, 0, TEXTURE_ATLAS_X, TEXTURE_ATLAS_Y);
+    setClut(poly, 0, 0);
+}
+
+static void draw_camera_textured_log_quad(
+    RenderContext *context,
+    const Vec3i *v0,
+    const Vec3i *v1,
+    const Vec3i *v2,
+    const Vec3i *v3,
+    int face_type
+) {
+    ProjectedVertex p0;
+    ProjectedVertex p1;
+    ProjectedVertex p2;
+    ProjectedVertex p3;
+
+    const int tex_u0 = log_face_texture_u(face_type);
+    const int tex_v0 = LOG_TILE_V;
+    const int tex_u1 = tex_u0 + LOG_TILE_SIZE - 1;
+    const int tex_v1 = tex_v0 + LOG_TILE_SIZE - 1;
+
+    int depth_a;
+    int depth_b;
+    int ot_a;
+    int ot_b;
+
+    if (!face_is_safe_for_textured_quad(v0, v1, v2, v3)) {
+        return;
+    }
+
+    project_camera_vertex(v0, &p0);
+    project_camera_vertex(v1, &p1);
+    project_camera_vertex(v2, &p2);
+    project_camera_vertex(v3, &p3);
+
+    /*
+     * Do not render the whole face as one large textured quad primitive.
+     * A single large quad is sorted by one average depth, which caused nearby
+     * world triangles to overwrite parts of the log face.
+     *
+     * Two textured triangle primitives are still very cheap on PS1 and sort
+     * much better.
+     */
+    depth_a = (v0->z + v1->z + v2->z) / 3;
+    depth_b = (v0->z + v2->z + v3->z) / 3;
+
+    ot_a = depth_to_ot(depth_a);
+    ot_b = depth_to_ot(depth_b);
+
+    draw_projected_textured_triangle(
+        context,
+        &p0,
+        &p1,
+        &p2,
+        tex_u0, tex_v0,
+        tex_u1, tex_v0,
+        tex_u1, tex_v1,
+        ot_a
+    );
+
+    draw_projected_textured_triangle(
+        context,
+        &p0,
+        &p2,
+        &p3,
+        tex_u0, tex_v0,
+        tex_u1, tex_v1,
+        tex_u0, tex_v1,
+        ot_b
+    );
+}
+
 static void draw_mesh(RenderContext *context) {
     for (int i = 0; i < mesh_face_count; i++) {
         const MeshFace *face = &(mesh_faces[i]);
@@ -2997,8 +3203,22 @@ static void draw_mesh(RenderContext *context) {
         const Vec3i *v2 = &(camera_vertices[face->v[2]]);
         const Vec3i *v3 = &(camera_vertices[face->v[3]]);
 
-        draw_camera_triangle_clipped(context, v0, v1, v2, face->r, face->g, face->b);
-        draw_camera_triangle_clipped(context, v0, v2, v3, face->r, face->g, face->b);
+        if (
+            face->block_type == BLOCK_LOG &&
+            face_is_safe_for_textured_quad(v0, v1, v2, v3)
+        ) {
+            draw_camera_textured_log_quad(
+                context,
+                v0,
+                v1,
+                v2,
+                v3,
+                face->face_type
+            );
+        } else {
+            draw_camera_triangle_clipped(context, v0, v1, v2, face->r, face->g, face->b);
+            draw_camera_triangle_clipped(context, v0, v2, v3, face->r, face->g, face->b);
+        }
     }
 }
 
@@ -5224,6 +5444,7 @@ int main(int argc, const char **argv) {
      * Sky-ish background.
      */
     setup_context(&ctx, SCREEN_W, SCREEN_H, SKY_R, SKY_G, SKY_B);
+    upload_texture_assets();
     init_input();
     init_memory_card();
 
