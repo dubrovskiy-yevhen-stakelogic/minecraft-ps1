@@ -691,8 +691,8 @@ static void build_world_mesh(int center_tile_x, int center_tile_z) {
 
 
 static void rebuild_mesh_if_needed(void) {
-    const int center_tile_x = world_to_tile(camera_pos_x);
-    const int center_tile_z = world_to_tile(camera_pos_z);
+    const int center_tile_x = world_to_tile(game_state.player.camera_pos_x);
+    const int center_tile_z = world_to_tile(game_state.player.camera_pos_z);
 
     if (
         mesh_dirty ||
@@ -705,18 +705,18 @@ static void rebuild_mesh_if_needed(void) {
 
 
 static void transform_all_vertices(void) {
-    const int sin_y = isin(-camera_yaw);
-    const int cos_y = icos(-camera_yaw);
+    const int sin_y = isin(-game_state.player.camera_yaw);
+    const int cos_y = icos(-game_state.player.camera_yaw);
 
-    const int sin_x = isin(camera_pitch);
-    const int cos_x = icos(camera_pitch);
+    const int sin_x = isin(game_state.player.camera_pitch);
+    const int cos_x = icos(game_state.player.camera_pitch);
 
     for (int i = 0; i < mesh_vertex_count; i++) {
         const Vec3i *world = &(mesh_vertices[i]);
 
-        const int rel_x = world->x - camera_pos_x;
-        const int rel_y = world->y - camera_pos_y;
-        const int rel_z = world->z - camera_pos_z;
+        const int rel_x = world->x - game_state.player.camera_pos_x;
+        const int rel_y = world->y - game_state.player.camera_pos_y;
+        const int rel_z = world->z - game_state.player.camera_pos_z;
 
         const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
         const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;
@@ -762,7 +762,7 @@ static void apply_distance_fog(
 ) {
     int fog_amount;
 
-    if (!fog_enabled) {
+    if (!game_state.app.fog_enabled) {
         return;
     }
 

@@ -348,22 +348,7 @@ static GameState game_state = {
 #define pad_buffers game_state.input.pad_buffers
 #define pad_previous_buttons game_state.input.pad_previous_buttons
 
-#define camera_pos_x game_state.player.camera_pos_x
-#define camera_pos_y game_state.player.camera_pos_y
-#define camera_pos_z game_state.player.camera_pos_z
-#define camera_yaw game_state.player.camera_yaw
-#define camera_pitch game_state.player.camera_pitch
-#define fly_mode_enabled game_state.player.fly_mode_enabled
-#define autojump_enabled game_state.player.autojump_enabled
-#define player_health_hearts game_state.player.player_health_hearts
 
-#define app_state game_state.app.app_state
-#define menu_selected_option game_state.app.menu_selected_option
-#define pause_selected_option game_state.app.pause_selected_option
-#define hud_visible game_state.app.hud_visible
-#define fog_enabled game_state.app.fog_enabled
-#define system_status_text game_state.app.system_status_text
-#define system_status_timer game_state.app.system_status_timer
 
 #define selected_hotbar_slot game_state.inventory.selected_hotbar_slot
 #define inventory_cursor_slot game_state.inventory.inventory_cursor_slot
@@ -525,18 +510,18 @@ static uint32_t checksum_bytes(const uint8_t *data, int size) {
 }
 
 static void set_system_status(const char *text, int frames) {
-    system_status_text = text;
-    system_status_timer = frames;
+    game_state.app.system_status_text = text;
+    game_state.app.system_status_timer = frames;
 }
 
 static void tick_system_status(void) {
-    if (system_status_timer > 0) {
-        system_status_timer--;
+    if (game_state.app.system_status_timer > 0) {
+        game_state.app.system_status_timer--;
     }
 }
 
 static void update_clear_color_for_game(void) {
-    if (fog_enabled) {
+    if (game_state.app.fog_enabled) {
         setRGB0(&(ctx.buffers[0].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
         setRGB0(&(ctx.buffers[1].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
     } else {
@@ -590,12 +575,12 @@ static void fill_save_data(SaveData *save) {
     save->magic = SAVE_MAGIC;
     save->version = SAVE_VERSION;
 
-    save->save_camera_pos_x = camera_pos_x;
-    save->save_camera_pos_y = camera_pos_y;
-    save->save_camera_pos_z = camera_pos_z;
-    save->save_camera_yaw = camera_yaw;
-    save->save_camera_pitch = camera_pitch;
-    save->save_fly_mode_enabled = fly_mode_enabled;
+    save->save_camera_pos_x = game_state.player.camera_pos_x;
+    save->save_camera_pos_y = game_state.player.camera_pos_y;
+    save->save_camera_pos_z = game_state.player.camera_pos_z;
+    save->save_camera_yaw = game_state.player.camera_yaw;
+    save->save_camera_pitch = game_state.player.camera_pitch;
+    save->save_fly_mode_enabled = game_state.player.fly_mode_enabled;
 
     save->save_block_edit_count = block_edit_count;
 
@@ -641,16 +626,16 @@ static int validate_save_data(const SaveData *save) {
 }
 
 static void apply_save_data(const SaveData *save) {
-    camera_pos_x = save->save_camera_pos_x;
-    camera_pos_y = save->save_camera_pos_y;
-    camera_pos_z = save->save_camera_pos_z;
-    camera_yaw = save->save_camera_yaw & ANGLE_MASK;
-    camera_pitch = clamp_int(
+    game_state.player.camera_pos_x = save->save_camera_pos_x;
+    game_state.player.camera_pos_y = save->save_camera_pos_y;
+    game_state.player.camera_pos_z = save->save_camera_pos_z;
+    game_state.player.camera_yaw = save->save_camera_yaw & ANGLE_MASK;
+    game_state.player.camera_pitch = clamp_int(
         save->save_camera_pitch,
         CAMERA_PITCH_MIN,
         CAMERA_PITCH_MAX
     );
-    fly_mode_enabled = save->save_fly_mode_enabled ? 1 : 0;
+    game_state.player.fly_mode_enabled = save->save_fly_mode_enabled ? 1 : 0;
 
     block_edit_count = save->save_block_edit_count;
 
@@ -690,7 +675,7 @@ static void apply_save_data(const SaveData *save) {
     mesh_center_tile_z = 999999;
     mesh_dirty = 1;
 
-    if (!fly_mode_enabled) {
+    if (!game_state.player.fly_mode_enabled) {
         snap_camera_to_ground();
     }
 }
@@ -931,9 +916,9 @@ static void start_new_game(void) {
     reset_inventory_items();
     reset_dropped_items();
     reset_block_breaking();
-    pause_selected_option = PAUSE_OPTION_RESUME;
+    game_state.app.pause_selected_option = PAUSE_OPTION_RESUME;
 
-    app_state = APP_STATE_PLAY;
+    game_state.app.app_state = APP_STATE_PLAY;
     set_system_status("NEW GAME", 90);
 }
 
@@ -942,11 +927,11 @@ static void start_loaded_game(void) {
         reset_inventory_items();
         reset_dropped_items();
         reset_block_breaking();
-        pause_selected_option = PAUSE_OPTION_RESUME;
-        app_state = APP_STATE_PLAY;
+        game_state.app.pause_selected_option = PAUSE_OPTION_RESUME;
+        game_state.app.app_state = APP_STATE_PLAY;
         set_system_status("LOAD OK", 90);
     } else {
-        app_state = APP_STATE_MENU;
+        game_state.app.app_state = APP_STATE_MENU;
         set_system_status("LOAD FAILED", 120);
     }
 }
@@ -981,21 +966,21 @@ int main(int argc, const char **argv) {
     init_memory_card();
 
     reset_camera();
-    app_state = APP_STATE_MENU;
+    game_state.app.app_state = APP_STATE_MENU;
     set_system_status("", 0);
 
     for (;;) {
         tick_system_status();
         update_clear_color_for_game();
 
-        if (app_state == APP_STATE_MENU) {
+        if (game_state.app.app_state == APP_STATE_MENU) {
             update_menu_input();
             draw_menu(&ctx);
             flip_buffers(&ctx);
             continue;
         }
 
-        if (app_state == APP_STATE_PAUSE) {
+        if (game_state.app.app_state == APP_STATE_PAUSE) {
             update_pause_input();
             rebuild_mesh_if_needed();
             transform_all_vertices();
@@ -1006,14 +991,14 @@ int main(int argc, const char **argv) {
             continue;
         }
 
-        if (app_state == APP_STATE_INVENTORY) {
+        if (game_state.app.app_state == APP_STATE_INVENTORY) {
             update_inventory_input();
             draw_inventory_screen(&ctx);
             flip_buffers(&ctx);
             continue;
         }
 
-        if (app_state == APP_STATE_WORKBENCH) {
+        if (game_state.app.app_state == APP_STATE_WORKBENCH) {
             update_workbench_input();
             draw_workbench_screen(&ctx);
             flip_buffers(&ctx);

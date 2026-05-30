@@ -156,27 +156,27 @@ static void update_menu_input(void) {
     const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
     if (pressed_this_frame & PAD_UP) {
-        menu_selected_option--;
+        game_state.app.menu_selected_option--;
 
-        if (menu_selected_option < 0) {
-            menu_selected_option = MENU_OPTION_COUNT - 1;
+        if (game_state.app.menu_selected_option < 0) {
+            game_state.app.menu_selected_option = MENU_OPTION_COUNT - 1;
         }
     }
 
     if (pressed_this_frame & PAD_DOWN) {
-        menu_selected_option++;
+        game_state.app.menu_selected_option++;
 
-        if (menu_selected_option >= MENU_OPTION_COUNT) {
-            menu_selected_option = 0;
+        if (game_state.app.menu_selected_option >= MENU_OPTION_COUNT) {
+            game_state.app.menu_selected_option = 0;
         }
     }
 
     if (pressed_this_frame & PAD_LEFT) {
-        menu_selected_option = MENU_OPTION_NEW_GAME;
+        game_state.app.menu_selected_option = MENU_OPTION_NEW_GAME;
     }
 
     if (pressed_this_frame & PAD_RIGHT) {
-        menu_selected_option = MENU_OPTION_LOAD_GAME;
+        game_state.app.menu_selected_option = MENU_OPTION_LOAD_GAME;
     }
 
     if (
@@ -184,7 +184,7 @@ static void update_menu_input(void) {
         (pressed_this_frame & PAD_CIRCLE) ||
         (pressed_this_frame & PAD_START)
     ) {
-        if (menu_selected_option == MENU_OPTION_NEW_GAME) {
+        if (game_state.app.menu_selected_option == MENU_OPTION_NEW_GAME) {
             start_new_game();
         } else {
             start_loaded_game();
@@ -200,24 +200,24 @@ static void update_pause_input(void) {
     const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
     if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
-        app_state = APP_STATE_PLAY;
+        game_state.app.app_state = APP_STATE_PLAY;
         pad_previous_buttons = buttons;
         return;
     }
 
     if (pressed_this_frame & PAD_UP) {
-        pause_selected_option--;
+        game_state.app.pause_selected_option--;
 
-        if (pause_selected_option < 0) {
-            pause_selected_option = PAUSE_OPTION_COUNT - 1;
+        if (game_state.app.pause_selected_option < 0) {
+            game_state.app.pause_selected_option = PAUSE_OPTION_COUNT - 1;
         }
     }
 
     if (pressed_this_frame & PAD_DOWN) {
-        pause_selected_option++;
+        game_state.app.pause_selected_option++;
 
-        if (pause_selected_option >= PAUSE_OPTION_COUNT) {
-            pause_selected_option = 0;
+        if (game_state.app.pause_selected_option >= PAUSE_OPTION_COUNT) {
+            game_state.app.pause_selected_option = 0;
         }
     }
 
@@ -225,21 +225,21 @@ static void update_pause_input(void) {
         (pressed_this_frame & PAD_CROSS) ||
         (pressed_this_frame & PAD_CIRCLE)
     ) {
-        switch (pause_selected_option) {
+        switch (game_state.app.pause_selected_option) {
             case PAUSE_OPTION_RESUME:
-                app_state = APP_STATE_PLAY;
+                game_state.app.app_state = APP_STATE_PLAY;
                 break;
 
             case PAUSE_OPTION_INVENTORY:
-                app_state = APP_STATE_INVENTORY;
+                game_state.app.app_state = APP_STATE_INVENTORY;
                 inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
                 set_system_status("INVENTORY", 45);
                 break;
 
             case PAUSE_OPTION_TOGGLE_FLY:
-                fly_mode_enabled = !fly_mode_enabled;
+                game_state.player.fly_mode_enabled = !game_state.player.fly_mode_enabled;
 
-                if (!fly_mode_enabled) {
+                if (!game_state.player.fly_mode_enabled) {
                     snap_camera_to_ground();
                     set_system_status("MODE WALK", 90);
                 } else {
@@ -248,9 +248,9 @@ static void update_pause_input(void) {
                 break;
 
             case PAUSE_OPTION_TOGGLE_HUD:
-                hud_visible = !hud_visible;
+                game_state.app.hud_visible = !game_state.app.hud_visible;
 
-                if (hud_visible) {
+                if (game_state.app.hud_visible) {
                     set_system_status("HELP HUD ON", 90);
                 } else {
                     set_system_status("HELP HUD OFF", 90);
@@ -258,10 +258,10 @@ static void update_pause_input(void) {
                 break;
 
             case PAUSE_OPTION_TOGGLE_FOG:
-                fog_enabled = !fog_enabled;
+                game_state.app.fog_enabled = !game_state.app.fog_enabled;
                 update_clear_color_for_game();
 
-                if (fog_enabled) {
+                if (game_state.app.fog_enabled) {
                     set_system_status("FOG ON", 90);
                 } else {
                     set_system_status("FOG OFF", 90);
@@ -269,9 +269,9 @@ static void update_pause_input(void) {
                 break;
 
             case PAUSE_OPTION_TOGGLE_AUTOJUMP:
-                autojump_enabled = !autojump_enabled;
+                game_state.player.autojump_enabled = !game_state.player.autojump_enabled;
 
-                if (autojump_enabled) {
+                if (game_state.player.autojump_enabled) {
                     set_system_status("AUTOJUMP ON", 90);
                 } else {
                     set_system_status("AUTOJUMP OFF", 90);
@@ -291,7 +291,7 @@ static void update_pause_input(void) {
                     reset_inventory_items();
                     reset_dropped_items();
                     reset_block_breaking();
-                    app_state = APP_STATE_PLAY;
+                    game_state.app.app_state = APP_STATE_PLAY;
                     set_system_status("LOAD OK", 90);
                 } else {
                     set_system_status("LOAD FAILED", 120);
@@ -300,9 +300,9 @@ static void update_pause_input(void) {
 
             case PAUSE_OPTION_RETURN_MENU:
             default:
-                app_state = APP_STATE_MENU;
-                menu_selected_option = MENU_OPTION_NEW_GAME;
-                pause_selected_option = PAUSE_OPTION_RESUME;
+                game_state.app.app_state = APP_STATE_MENU;
+                game_state.app.menu_selected_option = MENU_OPTION_NEW_GAME;
+                game_state.app.pause_selected_option = PAUSE_OPTION_RESUME;
                 set_system_status("MAIN MENU", 90);
                 break;
         }
@@ -325,7 +325,7 @@ static void draw_menu(RenderContext *context) {
         82,
         140,
         "NEW GAME",
-        menu_selected_option == MENU_OPTION_NEW_GAME
+        game_state.app.menu_selected_option == MENU_OPTION_NEW_GAME
     );
     draw_menu_option(
         context,
@@ -333,15 +333,15 @@ static void draw_menu(RenderContext *context) {
         112,
         140,
         "LOAD GAME",
-        menu_selected_option == MENU_OPTION_LOAD_GAME
+        game_state.app.menu_selected_option == MENU_OPTION_LOAD_GAME
     );
 
     draw_minecraft_button(context, 32, 206, 256, 20, 0);
     draw_text(context, 50, 211, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE/START OK");
 
-    if (system_status_timer > 0) {
+    if (game_state.app.system_status_timer > 0) {
         draw_minecraft_button(context, 102, 178, 116, 18, 0);
-        draw_text(context, 120, 182, 0, system_status_text);
+        draw_text(context, 120, 182, 0, game_state.app.system_status_text);
     }
 }
 
@@ -364,7 +364,7 @@ static void draw_pause_menu(RenderContext *context) {
         32,
         172,
         "BACK TO GAME",
-        pause_selected_option == PAUSE_OPTION_RESUME
+        game_state.app.pause_selected_option == PAUSE_OPTION_RESUME
     );
     draw_pause_option(
         context,
@@ -372,39 +372,39 @@ static void draw_pause_menu(RenderContext *context) {
         52,
         172,
         "INVENTORY",
-        pause_selected_option == PAUSE_OPTION_INVENTORY
+        game_state.app.pause_selected_option == PAUSE_OPTION_INVENTORY
     );
     draw_pause_option(
         context,
         74,
         72,
         172,
-        fly_mode_enabled ? "SWITCH TO WALK" : "SWITCH TO FLY",
-        pause_selected_option == PAUSE_OPTION_TOGGLE_FLY
+        game_state.player.fly_mode_enabled ? "SWITCH TO WALK" : "SWITCH TO FLY",
+        game_state.app.pause_selected_option == PAUSE_OPTION_TOGGLE_FLY
     );
     draw_pause_option(
         context,
         74,
         92,
         172,
-        hud_visible ? "HELP HUD: ON" : "HELP HUD: OFF",
-        pause_selected_option == PAUSE_OPTION_TOGGLE_HUD
+        game_state.app.hud_visible ? "HELP HUD: ON" : "HELP HUD: OFF",
+        game_state.app.pause_selected_option == PAUSE_OPTION_TOGGLE_HUD
     );
     draw_pause_option(
         context,
         74,
         112,
         172,
-        fog_enabled ? "FOG: ON" : "FOG: OFF",
-        pause_selected_option == PAUSE_OPTION_TOGGLE_FOG
+        game_state.app.fog_enabled ? "FOG: ON" : "FOG: OFF",
+        game_state.app.pause_selected_option == PAUSE_OPTION_TOGGLE_FOG
     );
     draw_pause_option(
         context,
         74,
         132,
         172,
-        autojump_enabled ? "AUTOJUMP: ON" : "AUTOJUMP: OFF",
-        pause_selected_option == PAUSE_OPTION_TOGGLE_AUTOJUMP
+        game_state.player.autojump_enabled ? "AUTOJUMP: ON" : "AUTOJUMP: OFF",
+        game_state.app.pause_selected_option == PAUSE_OPTION_TOGGLE_AUTOJUMP
     );
     draw_pause_option(
         context,
@@ -412,7 +412,7 @@ static void draw_pause_menu(RenderContext *context) {
         152,
         172,
         "SAVE GAME",
-        pause_selected_option == PAUSE_OPTION_SAVE_GAME
+        game_state.app.pause_selected_option == PAUSE_OPTION_SAVE_GAME
     );
     draw_pause_option(
         context,
@@ -420,7 +420,7 @@ static void draw_pause_menu(RenderContext *context) {
         172,
         172,
         "LOAD GAME",
-        pause_selected_option == PAUSE_OPTION_LOAD_GAME
+        game_state.app.pause_selected_option == PAUSE_OPTION_LOAD_GAME
     );
     draw_pause_option(
         context,
@@ -428,14 +428,14 @@ static void draw_pause_menu(RenderContext *context) {
         192,
         172,
         "MAIN MENU",
-        pause_selected_option == PAUSE_OPTION_RETURN_MENU
+        game_state.app.pause_selected_option == PAUSE_OPTION_RETURN_MENU
     );
 
     draw_text(context, 70, 216, 0, "UP/DOWN CHOOSE  CROSS/CIRCLE OK");
     draw_text(context, 86, 228, 0, "START/TRIANGLE BACK");
 
-    if (system_status_timer > 0) {
+    if (game_state.app.system_status_timer > 0) {
         draw_minecraft_button(context, 104, 4, 112, 18, 0);
-        draw_text(context, 122, 8, 0, system_status_text);
+        draw_text(context, 122, 8, 0, game_state.app.system_status_text);
     }
 }

@@ -8,11 +8,11 @@
 #include "raycast.h"
 
 static void get_camera_forward_direction(Vec3i *dir) {
-    const int cos_pitch = icos(camera_pitch);
+    const int cos_pitch = icos(game_state.player.camera_pitch);
 
-    dir->x = (isin(camera_yaw) * cos_pitch) / FIXED_ONE;
-    dir->y = isin(camera_pitch);
-    dir->z = (icos(camera_yaw) * cos_pitch) / FIXED_ONE;
+    dir->x = (isin(game_state.player.camera_yaw) * cos_pitch) / FIXED_ONE;
+    dir->y = isin(game_state.player.camera_pitch);
+    dir->z = (icos(game_state.player.camera_yaw) * cos_pitch) / FIXED_ONE;
 }
 
 
@@ -81,9 +81,9 @@ static RaycastHit raycast_block(void) {
         int previous_z = 999999;
 
         for (int distance = 8; distance <= RAYCAST_MAX_DISTANCE; distance += RAYCAST_STEP) {
-            const int sample_x = camera_pos_x + ((dir.x * distance) / FIXED_ONE);
-            const int sample_y = camera_pos_y + ((dir.y * distance) / FIXED_ONE);
-            const int sample_z = camera_pos_z + ((dir.z * distance) / FIXED_ONE);
+            const int sample_x = game_state.player.camera_pos_x + ((dir.x * distance) / FIXED_ONE);
+            const int sample_y = game_state.player.camera_pos_y + ((dir.y * distance) / FIXED_ONE);
+            const int sample_z = game_state.player.camera_pos_z + ((dir.z * distance) / FIXED_ONE);
 
             const int block_x = world_to_tile(sample_x);
             const int block_y = world_to_block_y(sample_y);

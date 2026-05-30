@@ -13,15 +13,15 @@ static int project_breaking_world_point(
     int world_z,
     ProjectedVertex *projected
 ) {
-    const int sin_y = isin(-camera_yaw);
-    const int cos_y = icos(-camera_yaw);
+    const int sin_y = isin(-game_state.player.camera_yaw);
+    const int cos_y = icos(-game_state.player.camera_yaw);
 
-    const int sin_x = isin(camera_pitch);
-    const int cos_x = icos(camera_pitch);
+    const int sin_x = isin(game_state.player.camera_pitch);
+    const int cos_x = icos(game_state.player.camera_pitch);
 
-    const int rel_x = world_x - camera_pos_x;
-    const int rel_y = world_y - camera_pos_y;
-    const int rel_z = world_z - camera_pos_z;
+    const int rel_x = world_x - game_state.player.camera_pos_x;
+    const int rel_y = world_y - game_state.player.camera_pos_y;
+    const int rel_z = world_z - game_state.player.camera_pos_z;
 
     const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
     const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;
@@ -210,8 +210,8 @@ static int get_surface_top_block_y_at_world_position(int world_x, int world_z) {
 
 static int get_player_center_top_block_y(void) {
     return get_surface_top_block_y_at_world_position(
-        camera_pos_x,
-        camera_pos_z
+        game_state.player.camera_pos_x,
+        game_state.player.camera_pos_z
     );
 }
 
@@ -282,7 +282,7 @@ static int is_player_footprint_clear_at(
          * the center point to cross onto the higher tile.
          */
         if (sample_top_block_y > target_top_block_y) {
-            if (!autojump_enabled) {
+            if (!game_state.player.autojump_enabled) {
                 return 0;
             }
 
@@ -303,17 +303,17 @@ static void snap_camera_to_ground(void) {
         return;
     }
 
-    camera_pos_y = block_y_to_world_top(top_block_y) + PLAYER_EYE_HEIGHT;
+    game_state.player.camera_pos_y = block_y_to_world_top(top_block_y) + PLAYER_EYE_HEIGHT;
 }
 
 
 static void reset_camera(void) {
-    fly_mode_enabled = 0;
+    game_state.player.fly_mode_enabled = 0;
 
-    camera_pos_x = 0;
-    camera_pos_z = 0;
-    camera_yaw = 0;
-    camera_pitch = DEFAULT_CAMERA_PITCH;
+    game_state.player.camera_pos_x = 0;
+    game_state.player.camera_pos_z = 0;
+    game_state.player.camera_yaw = 0;
+    game_state.player.camera_pitch = DEFAULT_CAMERA_PITCH;
 
     snap_camera_to_ground();
 
@@ -340,7 +340,7 @@ static int is_walk_target_valid(int next_x, int next_z) {
      * OFF: higher blocks behave like walls.
      */
     if (next_top_block_y > current_top_block_y) {
-        if (!autojump_enabled) {
+        if (!game_state.player.autojump_enabled) {
             return 0;
         }
 
@@ -369,15 +369,15 @@ static int is_walk_target_valid(int next_x, int next_z) {
 
 
 static void try_walk_move(int delta_x, int delta_z) {
-    const int next_x = camera_pos_x + delta_x;
-    const int next_z = camera_pos_z + delta_z;
+    const int next_x = game_state.player.camera_pos_x + delta_x;
+    const int next_z = game_state.player.camera_pos_z + delta_z;
 
     if (!is_walk_target_valid(next_x, next_z)) {
         return;
     }
 
-    camera_pos_x = next_x;
-    camera_pos_z = next_z;
+    game_state.player.camera_pos_x = next_x;
+    game_state.player.camera_pos_z = next_z;
 
     snap_camera_to_ground();
 }
@@ -474,7 +474,7 @@ static void update_block_breaking(int is_break_button_down) {
         set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
         spawn_dropped_item(block_type, hit.hit_x, hit.hit_y, hit.hit_z);
 
-        if (!fly_mode_enabled) {
+        if (!game_state.player.fly_mode_enabled) {
             snap_camera_to_ground();
         }
 
@@ -500,10 +500,10 @@ static int block_intersects_player_footprint(int block_x, int block_y, int block
     const int block_min_z = tile_to_world_center(block_z) - BLOCK_HALF;
     const int block_max_z = tile_to_world_center(block_z) + BLOCK_HALF;
 
-    const int player_min_x = camera_pos_x - PLAYER_COLLISION_RADIUS;
-    const int player_max_x = camera_pos_x + PLAYER_COLLISION_RADIUS;
-    const int player_min_z = camera_pos_z - PLAYER_COLLISION_RADIUS;
-    const int player_max_z = camera_pos_z + PLAYER_COLLISION_RADIUS;
+    const int player_min_x = game_state.player.camera_pos_x - PLAYER_COLLISION_RADIUS;
+    const int player_max_x = game_state.player.camera_pos_x + PLAYER_COLLISION_RADIUS;
+    const int player_min_z = game_state.player.camera_pos_z - PLAYER_COLLISION_RADIUS;
+    const int player_max_z = game_state.player.camera_pos_z + PLAYER_COLLISION_RADIUS;
 
     if (player_max_x <= block_min_x || player_min_x >= block_max_x) {
         return 0;
@@ -560,16 +560,16 @@ static void update_input(void) {
     const uint16_t buttons = read_pad_buttons();
     const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
-    const int forward_x = isin(camera_yaw);
-    const int forward_z = icos(camera_yaw);
+    const int forward_x = isin(game_state.player.camera_yaw);
+    const int forward_z = icos(game_state.player.camera_yaw);
 
-    const int right_x = icos(camera_yaw);
-    const int right_z = -isin(camera_yaw);
+    const int right_x = icos(game_state.player.camera_yaw);
+    const int right_z = -isin(game_state.player.camera_yaw);
 
     if (pressed_this_frame & PAD_START) {
         reset_block_breaking();
-        app_state = APP_STATE_PAUSE;
-        pause_selected_option = PAUSE_OPTION_RESUME;
+        game_state.app.app_state = APP_STATE_PAUSE;
+        game_state.app.pause_selected_option = PAUSE_OPTION_RESUME;
         pad_previous_buttons = buttons;
         return;
     }
@@ -598,7 +598,7 @@ static void update_input(void) {
             get_block_type(use_hit.hit_x, use_hit.hit_y, use_hit.hit_z) == BLOCK_WORKBENCH
         ) {
             reset_block_breaking();
-            app_state = APP_STATE_WORKBENCH;
+            game_state.app.app_state = APP_STATE_WORKBENCH;
             workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
             set_system_status("WORKBENCH", 45);
             pad_previous_buttons = buttons;
@@ -607,22 +607,22 @@ static void update_input(void) {
     }
 
     if (buttons & PAD_LEFT) {
-        camera_yaw = (camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
+        game_state.player.camera_yaw = (game_state.player.camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
     }
 
     if (buttons & PAD_RIGHT) {
-        camera_yaw = (camera_yaw + CAMERA_YAW_SPEED) & ANGLE_MASK;
+        game_state.player.camera_yaw = (game_state.player.camera_yaw + CAMERA_YAW_SPEED) & ANGLE_MASK;
     }
 
     if (buttons & PAD_TRIANGLE) {
-        camera_pitch -= CAMERA_PITCH_SPEED;
+        game_state.player.camera_pitch -= CAMERA_PITCH_SPEED;
     }
 
     if (buttons & PAD_CROSS) {
-        camera_pitch += CAMERA_PITCH_SPEED;
+        game_state.player.camera_pitch += CAMERA_PITCH_SPEED;
     }
 
-    if (!fly_mode_enabled) {
+    if (!game_state.player.fly_mode_enabled) {
         if (pressed_this_frame & PAD_L2) {
             select_previous_hotbar_slot();
         }
@@ -632,39 +632,39 @@ static void update_input(void) {
         }
     }
 
-    camera_pitch = clamp_int(
-        camera_pitch,
+    game_state.player.camera_pitch = clamp_int(
+        game_state.player.camera_pitch,
         CAMERA_PITCH_MIN,
         CAMERA_PITCH_MAX
     );
 
-    if (fly_mode_enabled) {
+    if (game_state.player.fly_mode_enabled) {
         if (buttons & PAD_UP) {
-            camera_pos_x += (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
-            camera_pos_z += (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_x += (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_z += (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_DOWN) {
-            camera_pos_x -= (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
-            camera_pos_z -= (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_x -= (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_z -= (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_L1) {
-            camera_pos_x -= (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
-            camera_pos_z -= (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_x -= (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_z -= (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_R1) {
-            camera_pos_x += (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
-            camera_pos_z += (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_x += (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
+            game_state.player.camera_pos_z += (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
         }
 
         if (buttons & PAD_L2) {
-            camera_pos_y += FLY_VERTICAL_SPEED;
+            game_state.player.camera_pos_y += FLY_VERTICAL_SPEED;
         }
 
         if (buttons & PAD_R2) {
-            camera_pos_y -= FLY_VERTICAL_SPEED;
+            game_state.player.camera_pos_y -= FLY_VERTICAL_SPEED;
         }
     } else {
         if (buttons & PAD_UP) {

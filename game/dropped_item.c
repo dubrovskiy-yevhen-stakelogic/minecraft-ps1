@@ -65,9 +65,9 @@ static void update_dropped_items(void) {
         dropped_items[i].bob_frame++;
 
         if (
-            iabs(dropped_items[i].x - camera_pos_x) <= PICKUP_DISTANCE_XZ &&
-            iabs(dropped_items[i].z - camera_pos_z) <= PICKUP_DISTANCE_XZ &&
-            iabs(dropped_items[i].y - camera_pos_y) <= PICKUP_DISTANCE_Y
+            iabs(dropped_items[i].x - game_state.player.camera_pos_x) <= PICKUP_DISTANCE_XZ &&
+            iabs(dropped_items[i].z - game_state.player.camera_pos_z) <= PICKUP_DISTANCE_XZ &&
+            iabs(dropped_items[i].y - game_state.player.camera_pos_y) <= PICKUP_DISTANCE_Y
         ) {
             const int remaining = add_items_to_inventory(
                 dropped_items[i].type,
@@ -91,15 +91,15 @@ static int project_world_position(
     int world_z,
     ProjectedVertex *projected
 ) {
-    const int sin_y = isin(-camera_yaw);
-    const int cos_y = icos(-camera_yaw);
+    const int sin_y = isin(-game_state.player.camera_yaw);
+    const int cos_y = icos(-game_state.player.camera_yaw);
 
-    const int sin_x = isin(camera_pitch);
-    const int cos_x = icos(camera_pitch);
+    const int sin_x = isin(game_state.player.camera_pitch);
+    const int cos_x = icos(game_state.player.camera_pitch);
 
-    const int rel_x = world_x - camera_pos_x;
-    const int rel_y = world_y - camera_pos_y;
-    const int rel_z = world_z - camera_pos_z;
+    const int rel_x = world_x - game_state.player.camera_pos_x;
+    const int rel_y = world_y - game_state.player.camera_pos_y;
+    const int rel_z = world_z - game_state.player.camera_pos_z;
 
     const int x1 = ((rel_x * cos_y) + (rel_z * sin_y)) / FIXED_ONE;
     const int z1 = ((-rel_x * sin_y) + (rel_z * cos_y)) / FIXED_ONE;

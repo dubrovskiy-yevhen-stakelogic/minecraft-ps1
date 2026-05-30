@@ -147,7 +147,7 @@ static void update_workbench_input(void) {
     const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
     if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
-        app_state = APP_STATE_PLAY;
+        game_state.app.app_state = APP_STATE_PLAY;
         pad_previous_buttons = buttons;
         return;
     }
@@ -293,8 +293,8 @@ static void draw_workbench_screen(RenderContext *context) {
         );
     }
 
-    if (system_status_timer > 0) {
+    if (game_state.app.system_status_timer > 0) {
         draw_minecraft_button(context, 104, 226, 112, 14, 0);
-        draw_text(context, 122, 227, 0, system_status_text);
+        draw_text(context, 122, 227, 0, game_state.app.system_status_text);
     }
 }

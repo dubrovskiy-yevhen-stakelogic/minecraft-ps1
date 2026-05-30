@@ -344,9 +344,9 @@ static void draw_inventory_screen(RenderContext *context) {
         );
     }
 
-    if (system_status_timer > 0) {
+    if (game_state.app.system_status_timer > 0) {
         draw_minecraft_button(context, 104, 224, 112, 16, 0);
-        draw_text(context, 122, 226, 0, system_status_text);
+        draw_text(context, 122, 226, 0, game_state.app.system_status_text);
     }
 }
 
@@ -356,7 +356,7 @@ static void update_inventory_input(void) {
     const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
 
     if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
-        app_state = APP_STATE_PLAY;
+        game_state.app.app_state = APP_STATE_PLAY;
         pad_previous_buttons = buttons;
         return;
     }

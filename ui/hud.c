@@ -332,7 +332,7 @@ static void draw_hearts(RenderContext *context) {
             context,
             HEART_START_X + (i * 18),
             HEART_Y,
-            i < player_health_hearts
+            i < game_state.player.player_health_hearts
         );
     }
 }
@@ -354,15 +354,15 @@ static void draw_game_hud(RenderContext *context) {
     draw_hearts(context);
     draw_hotbar(context);
 
-    if (hud_visible) {
+    if (game_state.app.hud_visible) {
         draw_panel(context, 6, 8, 148, 64, 2, 32, 36, 42, 174, 174, 174);
         draw_text(context, 16, 18, 0, "MINECRAFT PS1");
-        draw_text(context, 16, 34, 0, fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
-        draw_text(context, 16, 50, 0, autojump_enabled ? "SQUARE HOLD BREAK" : "AUTOJUMP OFF");
+        draw_text(context, 16, 34, 0, game_state.player.fly_mode_enabled ? "MODE: FLY" : "MODE: WALK");
+        draw_text(context, 16, 50, 0, game_state.player.autojump_enabled ? "SQUARE HOLD BREAK" : "AUTOJUMP OFF");
     }
 
-    if (system_status_timer > 0) {
-        draw_minecraft_button(context, 8, hud_visible ? 80 : 8, 112, 18, 0);
-        draw_text(context, 18, hud_visible ? 84 : 12, 0, system_status_text);
+    if (game_state.app.system_status_timer > 0) {
+        draw_minecraft_button(context, 8, game_state.app.hud_visible ? 80 : 8, 112, 18, 0);
+        draw_text(context, 18, game_state.app.hud_visible ? 84 : 12, 0, game_state.app.system_status_text);
     }
 }
