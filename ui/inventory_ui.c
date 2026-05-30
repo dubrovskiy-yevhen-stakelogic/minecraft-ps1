@@ -9,18 +9,18 @@
 #include "inventory_ui.h"
 
 static void move_inventory_cursor(int dx, int dy) {
-    if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
-        int row = inventory_cursor_slot / INVENTORY_STORAGE_COLS;
-        int col = inventory_cursor_slot % INVENTORY_STORAGE_COLS;
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
+        int row = game_state.inventory.inventory_cursor_slot / INVENTORY_STORAGE_COLS;
+        int col = game_state.inventory.inventory_cursor_slot % INVENTORY_STORAGE_COLS;
 
         if (dy < 0 && row == 0) {
             if (col >= 6 && col <= 7) {
-                inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (1 * 2) + (col - 6);
+                game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (1 * 2) + (col - 6);
                 return;
             }
 
             if (col >= 8) {
-                inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
+                game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
                 return;
             }
         }
@@ -45,16 +45,16 @@ static void move_inventory_cursor(int dx, int dy) {
         }
 
         if (row < INVENTORY_STORAGE_ROWS) {
-            inventory_cursor_slot = (row * INVENTORY_STORAGE_COLS) + col;
+            game_state.inventory.inventory_cursor_slot = (row * INVENTORY_STORAGE_COLS) + col;
         } else {
-            inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
+            game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
         }
 
         return;
     }
 
-    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
-        int col = inventory_cursor_slot - INVENTORY_CURSOR_HOTBAR_START;
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
+        int col = game_state.inventory.inventory_cursor_slot - INVENTORY_CURSOR_HOTBAR_START;
 
         col += dx;
 
@@ -67,28 +67,28 @@ static void move_inventory_cursor(int dx, int dy) {
         }
 
         if (dy < 0) {
-            inventory_cursor_slot = ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
+            game_state.inventory.inventory_cursor_slot = ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
         } else if (dy > 0) {
-            inventory_cursor_slot = col;
+            game_state.inventory.inventory_cursor_slot = col;
         } else {
-            inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
+            game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
         }
 
         return;
     }
 
-    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
-        int local = inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START;
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        int local = game_state.inventory.inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START;
         int row = local / 2;
         int col = local % 2;
 
         if (dx > 0 && col == 1) {
-            inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
+            game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
             return;
         }
 
         if (dy > 0 && row == 1) {
-            inventory_cursor_slot = col + 6;
+            game_state.inventory.inventory_cursor_slot = col + 6;
             return;
         }
 
@@ -111,7 +111,7 @@ static void move_inventory_cursor(int dx, int dy) {
             row = 0;
         }
 
-        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (row * 2) + col;
+        game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (row * 2) + col;
         return;
     }
 
@@ -119,17 +119,17 @@ static void move_inventory_cursor(int dx, int dy) {
      * Crafting output slot.
      */
     if (dx < 0) {
-        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 3;
+        game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 3;
         return;
     }
 
     if (dy > 0) {
-        inventory_cursor_slot = 8;
+        game_state.inventory.inventory_cursor_slot = 8;
         return;
     }
 
     if (dy < 0) {
-        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 1;
+        game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 1;
         return;
     }
 }
@@ -207,9 +207,9 @@ static void draw_inventory_grid(RenderContext *context) {
             context,
             x,
             y,
-            inventory_storage_blocks[i].type,
-            inventory_storage_blocks[i].count,
-            inventory_cursor_slot == i,
+            game_state.inventory.inventory_storage_blocks[i].type,
+            game_state.inventory.inventory_storage_blocks[i].count,
+            game_state.inventory.inventory_cursor_slot == i,
             0,
             300 + i
         );
@@ -224,9 +224,9 @@ static void draw_inventory_grid(RenderContext *context) {
             context,
             x,
             y,
-            hotbar_slot_blocks[i].type,
-            hotbar_slot_blocks[i].count,
-            inventory_cursor_slot == cursor_index,
+            game_state.inventory.hotbar_slot_blocks[i].type,
+            game_state.inventory.hotbar_slot_blocks[i].count,
+            game_state.inventory.inventory_cursor_slot == cursor_index,
             0,
             500 + i
         );
@@ -243,9 +243,9 @@ static void draw_inventory_crafting_area(RenderContext *context) {
         context,
         190,
         48,
-        crafting_slots[0].type,
-        crafting_slots[0].count,
-        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START,
+        game_state.inventory.crafting_slots[0].type,
+        game_state.inventory.crafting_slots[0].count,
+        game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START,
         0,
         600
     );
@@ -253,9 +253,9 @@ static void draw_inventory_crafting_area(RenderContext *context) {
         context,
         210,
         48,
-        crafting_slots[1].type,
-        crafting_slots[1].count,
-        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 1,
+        game_state.inventory.crafting_slots[1].type,
+        game_state.inventory.crafting_slots[1].count,
+        game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 1,
         0,
         601
     );
@@ -263,9 +263,9 @@ static void draw_inventory_crafting_area(RenderContext *context) {
         context,
         190,
         68,
-        crafting_slots[2].type,
-        crafting_slots[2].count,
-        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 2,
+        game_state.inventory.crafting_slots[2].type,
+        game_state.inventory.crafting_slots[2].count,
+        game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 2,
         0,
         602
     );
@@ -273,9 +273,9 @@ static void draw_inventory_crafting_area(RenderContext *context) {
         context,
         210,
         68,
-        crafting_slots[3].type,
-        crafting_slots[3].count,
-        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 3,
+        game_state.inventory.crafting_slots[3].type,
+        game_state.inventory.crafting_slots[3].count,
+        game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 3,
         0,
         603
     );
@@ -287,7 +287,7 @@ static void draw_inventory_crafting_area(RenderContext *context) {
         58,
         output.type,
         output.count,
-        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT,
+        game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT,
         stack_is_empty(&output),
         604
     );
@@ -328,16 +328,16 @@ static void draw_inventory_screen(RenderContext *context) {
     draw_text(context, 70, 182, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP/CRAFT");
     draw_text(context, 70, 196, 0, "R2+X SHIFT-CRAFT  START BACK");
 
-    if (!stack_is_empty(&inventory_held_stack)) {
-        const int texture_type = block_type_to_icon_texture(inventory_held_stack.type);
+    if (!stack_is_empty(&game_state.inventory.inventory_held_stack)) {
+        const int texture_type = block_type_to_icon_texture(game_state.inventory.inventory_held_stack.type);
 
         draw_text(context, 214, 182, 0, "HAND");
         draw_inventory_slot(
             context,
             256,
             178,
-            inventory_held_stack.type,
-            inventory_held_stack.count,
+            game_state.inventory.inventory_held_stack.type,
+            game_state.inventory.inventory_held_stack.count,
             1,
             0,
             800 + texture_type
@@ -381,7 +381,7 @@ static void update_inventory_input(void) {
         (pressed_this_frame & PAD_CROSS) ||
         (pressed_this_frame & PAD_CIRCLE)
     ) {
-        if ((buttons & PAD_R2) && inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        if ((buttons & PAD_R2) && game_state.inventory.inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT) {
             quick_craft_output_to_inventory();
         } else {
             swap_inventory_held_with_cursor();

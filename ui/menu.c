@@ -232,7 +232,7 @@ static void update_pause_input(void) {
 
             case PAUSE_OPTION_INVENTORY:
                 game_state.app.app_state = APP_STATE_INVENTORY;
-                inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
+                game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
                 set_system_status("INVENTORY", 45);
                 break;
 

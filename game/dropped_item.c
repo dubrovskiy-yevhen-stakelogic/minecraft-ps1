@@ -18,13 +18,13 @@ static int get_block_drop_type(int block_type) {
 
 static void reset_dropped_items(void) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
-        dropped_items[i].active = 0;
-        dropped_items[i].x = 0;
-        dropped_items[i].y = 0;
-        dropped_items[i].z = 0;
-        dropped_items[i].type = BLOCK_AIR;
-        dropped_items[i].count = 0;
-        dropped_items[i].bob_frame = 0;
+        game_state.dropped.dropped_items[i].active = 0;
+        game_state.dropped.dropped_items[i].x = 0;
+        game_state.dropped.dropped_items[i].y = 0;
+        game_state.dropped.dropped_items[i].z = 0;
+        game_state.dropped.dropped_items[i].type = BLOCK_AIR;
+        game_state.dropped.dropped_items[i].count = 0;
+        game_state.dropped.dropped_items[i].bob_frame = 0;
     }
 }
 
@@ -37,14 +37,14 @@ static void spawn_dropped_item(int block_type, int block_x, int block_y, int blo
     }
 
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
-        if (!dropped_items[i].active) {
-            dropped_items[i].active = 1;
-            dropped_items[i].x = tile_to_world_center(block_x);
-            dropped_items[i].y = block_y_to_world_min(block_y) + BLOCK_HALF;
-            dropped_items[i].z = tile_to_world_center(block_z);
-            dropped_items[i].type = (uint8_t)drop_type;
-            dropped_items[i].count = 1;
-            dropped_items[i].bob_frame = 0;
+        if (!game_state.dropped.dropped_items[i].active) {
+            game_state.dropped.dropped_items[i].active = 1;
+            game_state.dropped.dropped_items[i].x = tile_to_world_center(block_x);
+            game_state.dropped.dropped_items[i].y = block_y_to_world_min(block_y) + BLOCK_HALF;
+            game_state.dropped.dropped_items[i].z = tile_to_world_center(block_z);
+            game_state.dropped.dropped_items[i].type = (uint8_t)drop_type;
+            game_state.dropped.dropped_items[i].count = 1;
+            game_state.dropped.dropped_items[i].bob_frame = 0;
             return;
         }
     }
@@ -58,27 +58,27 @@ static void spawn_dropped_item(int block_type, int block_x, int block_y, int blo
 
 static void update_dropped_items(void) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
-        if (!dropped_items[i].active) {
+        if (!game_state.dropped.dropped_items[i].active) {
             continue;
         }
 
-        dropped_items[i].bob_frame++;
+        game_state.dropped.dropped_items[i].bob_frame++;
 
         if (
-            iabs(dropped_items[i].x - game_state.player.camera_pos_x) <= PICKUP_DISTANCE_XZ &&
-            iabs(dropped_items[i].z - game_state.player.camera_pos_z) <= PICKUP_DISTANCE_XZ &&
-            iabs(dropped_items[i].y - game_state.player.camera_pos_y) <= PICKUP_DISTANCE_Y
+            iabs(game_state.dropped.dropped_items[i].x - game_state.player.camera_pos_x) <= PICKUP_DISTANCE_XZ &&
+            iabs(game_state.dropped.dropped_items[i].z - game_state.player.camera_pos_z) <= PICKUP_DISTANCE_XZ &&
+            iabs(game_state.dropped.dropped_items[i].y - game_state.player.camera_pos_y) <= PICKUP_DISTANCE_Y
         ) {
             const int remaining = add_items_to_inventory(
-                dropped_items[i].type,
-                dropped_items[i].count
+                game_state.dropped.dropped_items[i].type,
+                game_state.dropped.dropped_items[i].count
             );
 
             if (remaining <= 0) {
-                dropped_items[i].active = 0;
+                game_state.dropped.dropped_items[i].active = 0;
                 set_system_status("PICKED UP", 35);
             } else {
-                dropped_items[i].count = (uint8_t)remaining;
+                game_state.dropped.dropped_items[i].count = (uint8_t)remaining;
             }
         }
     }
@@ -215,19 +215,19 @@ static void draw_dropped_item_icon(
 
 static void draw_dropped_items(RenderContext *context) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
-        if (!dropped_items[i].active) {
+        if (!game_state.dropped.dropped_items[i].active) {
             continue;
         }
 
         ProjectedVertex projected;
-        const int bob = ((dropped_items[i].bob_frame >> 3) & 1) ? 3 : 0;
+        const int bob = ((game_state.dropped.dropped_items[i].bob_frame >> 3) & 1) ? 3 : 0;
         int ot_z;
         int size;
 
         if (!project_world_position(
-            dropped_items[i].x,
-            dropped_items[i].y + bob,
-            dropped_items[i].z,
+            game_state.dropped.dropped_items[i].x,
+            game_state.dropped.dropped_items[i].y + bob,
+            game_state.dropped.dropped_items[i].z,
             &projected
         )) {
             continue;
@@ -255,7 +255,7 @@ static void draw_dropped_items(RenderContext *context) {
             projected.y - (size / 2),
             size,
             ot_z,
-            dropped_items[i].type,
+            game_state.dropped.dropped_items[i].type,
             900 + i
         );
     }

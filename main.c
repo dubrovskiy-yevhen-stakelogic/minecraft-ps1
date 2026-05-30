@@ -350,25 +350,8 @@ static GameState game_state = {
 
 
 
-#define selected_hotbar_slot game_state.inventory.selected_hotbar_slot
-#define inventory_cursor_slot game_state.inventory.inventory_cursor_slot
-#define workbench_cursor_slot game_state.inventory.workbench_cursor_slot
-#define inventory_held_stack game_state.inventory.inventory_held_stack
-#define hotbar_slot_blocks game_state.inventory.hotbar_slot_blocks
-#define crafting_slots game_state.inventory.crafting_slots
-#define workbench_crafting_slots game_state.inventory.workbench_crafting_slots
-#define inventory_storage_blocks game_state.inventory.inventory_storage_blocks
 
-#define dropped_items game_state.dropped.dropped_items
 
-#define breaking_active game_state.breaking.breaking_active
-#define breaking_block_x game_state.breaking.breaking_block_x
-#define breaking_block_y game_state.breaking.breaking_block_y
-#define breaking_block_z game_state.breaking.breaking_block_z
-#define breaking_block_face game_state.breaking.breaking_block_face
-#define breaking_block_type game_state.breaking.breaking_block_type
-#define breaking_progress game_state.breaking.breaking_progress
-#define breaking_required_frames game_state.breaking.breaking_required_frames
 
 #define save_buffer game_state.save.save_buffer
 
@@ -863,19 +846,19 @@ static int load_game_from_memory_card(void) {
 
 
 static ItemStack *get_inventory_cursor_stack_ptr(void) {
-    if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
-        return &(inventory_storage_blocks[inventory_cursor_slot]);
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
+        return &(game_state.inventory.inventory_storage_blocks[game_state.inventory.inventory_cursor_slot]);
     }
 
-    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
-        return &(hotbar_slot_blocks[inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT]);
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
+        return &(game_state.inventory.hotbar_slot_blocks[game_state.inventory.inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT]);
     }
 
-    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
-        return &(crafting_slots[inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START]);
+    if (game_state.inventory.inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        return &(game_state.inventory.crafting_slots[game_state.inventory.inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START]);
     }
 
-    return &(crafting_slots[0]);
+    return &(game_state.inventory.crafting_slots[0]);
 }
 
 

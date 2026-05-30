@@ -80,18 +80,18 @@ static void draw_breaking_crack_line(
 
 
 static int get_breaking_face_vertices(ProjectedVertex out[4]) {
-    const int x0 = tile_to_world_center(breaking_block_x) - BLOCK_HALF;
-    const int x1 = tile_to_world_center(breaking_block_x) + BLOCK_HALF;
-    const int y0 = block_y_to_world_min(breaking_block_y);
-    const int y1 = block_y_to_world_top(breaking_block_y);
-    const int z0 = tile_to_world_center(breaking_block_z) - BLOCK_HALF;
-    const int z1 = tile_to_world_center(breaking_block_z) + BLOCK_HALF;
+    const int x0 = tile_to_world_center(game_state.breaking.breaking_block_x) - BLOCK_HALF;
+    const int x1 = tile_to_world_center(game_state.breaking.breaking_block_x) + BLOCK_HALF;
+    const int y0 = block_y_to_world_min(game_state.breaking.breaking_block_y);
+    const int y1 = block_y_to_world_top(game_state.breaking.breaking_block_y);
+    const int z0 = tile_to_world_center(game_state.breaking.breaking_block_z) - BLOCK_HALF;
+    const int z1 = tile_to_world_center(game_state.breaking.breaking_block_z) + BLOCK_HALF;
 
     int wx[4];
     int wy[4];
     int wz[4];
 
-    switch (breaking_block_face) {
+    switch (game_state.breaking.breaking_block_face) {
         case FACE_NEG_X:
             wx[0] = x0; wy[0] = y0; wz[0] = z1;
             wx[1] = x0; wy[1] = y1; wz[1] = z1;
@@ -147,12 +147,12 @@ static int get_breaking_face_vertices(ProjectedVertex out[4]) {
 
 
 static void draw_breaking_overlay(RenderContext *context) {
-    if (!breaking_active || breaking_required_frames <= 0) {
+    if (!game_state.breaking.breaking_active || game_state.breaking.breaking_required_frames <= 0) {
         return;
     }
 
     ProjectedVertex face[4];
-    int stage = (breaking_progress * 7) / breaking_required_frames;
+    int stage = (game_state.breaking.breaking_progress * 7) / game_state.breaking.breaking_required_frames;
 
     if (stage < 1) {
         stage = 1;
@@ -417,14 +417,14 @@ static int get_block_hardness_frames(int block_type) {
 
 
 static void reset_block_breaking(void) {
-    breaking_active = 0;
-    breaking_block_x = 0;
-    breaking_block_y = 0;
-    breaking_block_z = 0;
-    breaking_block_face = FACE_POS_Y;
-    breaking_block_type = BLOCK_AIR;
-    breaking_progress = 0;
-    breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
+    game_state.breaking.breaking_active = 0;
+    game_state.breaking.breaking_block_x = 0;
+    game_state.breaking.breaking_block_y = 0;
+    game_state.breaking.breaking_block_z = 0;
+    game_state.breaking.breaking_block_face = FACE_POS_Y;
+    game_state.breaking.breaking_block_type = BLOCK_AIR;
+    game_state.breaking.breaking_progress = 0;
+    game_state.breaking.breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
 }
 
 
@@ -444,21 +444,21 @@ static void update_block_breaking(int is_break_button_down) {
     }
 
     if (
-        !breaking_active ||
-        breaking_block_x != hit.hit_x ||
-        breaking_block_y != hit.hit_y ||
-        breaking_block_z != hit.hit_z ||
-        breaking_block_face != hit.hit_face ||
-        breaking_block_type != block_type
+        !game_state.breaking.breaking_active ||
+        game_state.breaking.breaking_block_x != hit.hit_x ||
+        game_state.breaking.breaking_block_y != hit.hit_y ||
+        game_state.breaking.breaking_block_z != hit.hit_z ||
+        game_state.breaking.breaking_block_face != hit.hit_face ||
+        game_state.breaking.breaking_block_type != block_type
     ) {
-        breaking_active = 1;
-        breaking_block_x = hit.hit_x;
-        breaking_block_y = hit.hit_y;
-        breaking_block_z = hit.hit_z;
-        breaking_block_face = hit.hit_face;
-        breaking_block_type = block_type;
-        breaking_progress = 0;
-        breaking_required_frames = get_block_hardness_frames(block_type);
+        game_state.breaking.breaking_active = 1;
+        game_state.breaking.breaking_block_x = hit.hit_x;
+        game_state.breaking.breaking_block_y = hit.hit_y;
+        game_state.breaking.breaking_block_z = hit.hit_z;
+        game_state.breaking.breaking_block_face = hit.hit_face;
+        game_state.breaking.breaking_block_type = block_type;
+        game_state.breaking.breaking_progress = 0;
+        game_state.breaking.breaking_required_frames = get_block_hardness_frames(block_type);
         set_system_status("BREAKING...", 30);
     }
 
@@ -466,11 +466,11 @@ static void update_block_breaking(int is_break_button_down) {
      * Keep this intentionally slow and visible.
      * Earlier values felt identical to instant block deletion.
      */
-    if (breaking_progress < breaking_required_frames) {
-        breaking_progress++;
+    if (game_state.breaking.breaking_progress < game_state.breaking.breaking_required_frames) {
+        game_state.breaking.breaking_progress++;
     }
 
-    if (breaking_progress >= breaking_required_frames) {
+    if (game_state.breaking.breaking_progress >= game_state.breaking.breaking_required_frames) {
         set_block_type(hit.hit_x, hit.hit_y, hit.hit_z, BLOCK_AIR);
         spawn_dropped_item(block_type, hit.hit_x, hit.hit_y, hit.hit_z);
 
@@ -599,7 +599,7 @@ static void update_input(void) {
         ) {
             reset_block_breaking();
             game_state.app.app_state = APP_STATE_WORKBENCH;
-            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
             set_system_status("WORKBENCH", 45);
             pad_previous_buttons = buttons;
             return;

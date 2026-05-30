@@ -17,7 +17,7 @@ static ItemStack get_crafting_output_stack(void) {
     result.count = 0;
 
     for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
-        if (stack_is_empty(&(crafting_slots[i]))) {
+        if (stack_is_empty(&(game_state.inventory.crafting_slots[i]))) {
             continue;
         }
 
@@ -28,7 +28,7 @@ static ItemStack get_crafting_output_stack(void) {
          * one stack of logs in any crafting slot produces 4 planks.
          * The stack may contain any count; taking the output consumes only 1 log.
          */
-        if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count >= 1 && log_slot < 0) {
+        if (game_state.inventory.crafting_slots[i].type == BLOCK_LOG && game_state.inventory.crafting_slots[i].count >= 1 && log_slot < 0) {
             log_slot = i;
         }
 
@@ -37,7 +37,7 @@ static ItemStack get_crafting_output_stack(void) {
          * four planks, one in each 2x2 slot, produce a workbench.
          * Each slot can contain a stack; crafting consumes 1 plank per slot.
          */
-        if (crafting_slots[i].type == BLOCK_PLANKS && crafting_slots[i].count >= 1) {
+        if (game_state.inventory.crafting_slots[i].type == BLOCK_PLANKS && game_state.inventory.crafting_slots[i].count >= 1) {
             plank_count++;
         }
     }
@@ -61,9 +61,9 @@ static ItemStack get_crafting_output_stack(void) {
 static void consume_current_crafting_inputs(const ItemStack *output) {
     if (output->type == BLOCK_PLANKS) {
         for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
-            if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count > 0) {
-                crafting_slots[i].count--;
-                normalize_stack(&(crafting_slots[i]));
+            if (game_state.inventory.crafting_slots[i].type == BLOCK_LOG && game_state.inventory.crafting_slots[i].count > 0) {
+                game_state.inventory.crafting_slots[i].count--;
+                normalize_stack(&(game_state.inventory.crafting_slots[i]));
                 return;
             }
         }
@@ -71,9 +71,9 @@ static void consume_current_crafting_inputs(const ItemStack *output) {
 
     if (output->type == BLOCK_WORKBENCH) {
         for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
-            if (crafting_slots[i].type == BLOCK_PLANKS && crafting_slots[i].count > 0) {
-                crafting_slots[i].count--;
-                normalize_stack(&(crafting_slots[i]));
+            if (game_state.inventory.crafting_slots[i].type == BLOCK_PLANKS && game_state.inventory.crafting_slots[i].count > 0) {
+                game_state.inventory.crafting_slots[i].count--;
+                normalize_stack(&(game_state.inventory.crafting_slots[i]));
             }
         }
     }
@@ -155,12 +155,12 @@ static int is_workbench_2x2_plank_recipe_at(int start_col, int start_row) {
 
             if (inside) {
                 if (
-                    workbench_crafting_slots[index].type != BLOCK_PLANKS ||
-                    workbench_crafting_slots[index].count == 0
+                    game_state.inventory.workbench_crafting_slots[index].type != BLOCK_PLANKS ||
+                    game_state.inventory.workbench_crafting_slots[index].count == 0
                 ) {
                     return 0;
                 }
-            } else if (!stack_is_empty(&(workbench_crafting_slots[index]))) {
+            } else if (!stack_is_empty(&(game_state.inventory.workbench_crafting_slots[index]))) {
                 return 0;
             }
         }
@@ -193,15 +193,15 @@ static ItemStack get_workbench_output_stack(void) {
     result.count = 0;
 
     for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
-        if (stack_is_empty(&(workbench_crafting_slots[i]))) {
+        if (stack_is_empty(&(game_state.inventory.workbench_crafting_slots[i]))) {
             continue;
         }
 
         non_empty_count++;
 
         if (
-            workbench_crafting_slots[i].type == BLOCK_LOG &&
-            workbench_crafting_slots[i].count >= 1 &&
+            game_state.inventory.workbench_crafting_slots[i].type == BLOCK_LOG &&
+            game_state.inventory.workbench_crafting_slots[i].count >= 1 &&
             log_slot < 0
         ) {
             log_slot = i;
@@ -227,9 +227,9 @@ static ItemStack get_workbench_output_stack(void) {
 static void consume_current_workbench_inputs(const ItemStack *output) {
     if (output->type == BLOCK_PLANKS) {
         for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
-            if (workbench_crafting_slots[i].type == BLOCK_LOG && workbench_crafting_slots[i].count > 0) {
-                workbench_crafting_slots[i].count--;
-                normalize_stack(&(workbench_crafting_slots[i]));
+            if (game_state.inventory.workbench_crafting_slots[i].type == BLOCK_LOG && game_state.inventory.workbench_crafting_slots[i].count > 0) {
+                game_state.inventory.workbench_crafting_slots[i].count--;
+                normalize_stack(&(game_state.inventory.workbench_crafting_slots[i]));
                 return;
             }
         }
@@ -247,11 +247,11 @@ static void consume_current_workbench_inputs(const ItemStack *output) {
                     const int index = (row * WORKBENCH_CRAFT_COLS) + col;
 
                     if (
-                        workbench_crafting_slots[index].type == BLOCK_PLANKS &&
-                        workbench_crafting_slots[index].count > 0
+                        game_state.inventory.workbench_crafting_slots[index].type == BLOCK_PLANKS &&
+                        game_state.inventory.workbench_crafting_slots[index].count > 0
                     ) {
-                        workbench_crafting_slots[index].count--;
-                        normalize_stack(&(workbench_crafting_slots[index]));
+                        game_state.inventory.workbench_crafting_slots[index].count--;
+                        normalize_stack(&(game_state.inventory.workbench_crafting_slots[index]));
                     }
                 }
             }

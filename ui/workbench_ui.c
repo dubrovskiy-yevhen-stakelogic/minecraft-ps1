@@ -24,17 +24,17 @@
 
 
 static void move_workbench_cursor(int dx, int dy) {
-    if (workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
-        int row = workbench_cursor_slot / WORKBENCH_CRAFT_COLS;
-        int col = workbench_cursor_slot % WORKBENCH_CRAFT_COLS;
+    if (game_state.inventory.workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
+        int row = game_state.inventory.workbench_cursor_slot / WORKBENCH_CRAFT_COLS;
+        int col = game_state.inventory.workbench_cursor_slot % WORKBENCH_CRAFT_COLS;
 
         if (dx > 0 && col == WORKBENCH_CRAFT_COLS - 1) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
             return;
         }
 
         if (dy > 0 && row == WORKBENCH_CRAFT_ROWS - 1) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
             return;
         }
 
@@ -57,39 +57,39 @@ static void move_workbench_cursor(int dx, int dy) {
             row = 0;
         }
 
-        workbench_cursor_slot = (row * WORKBENCH_CRAFT_COLS) + col;
+        game_state.inventory.workbench_cursor_slot = (row * WORKBENCH_CRAFT_COLS) + col;
         return;
     }
 
-    if (workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+    if (game_state.inventory.workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
         if (dx < 0) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 5;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 5;
             return;
         }
 
         if (dy > 0) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + 4;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + 4;
             return;
         }
 
         if (dy < 0) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 2;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 2;
             return;
         }
 
         return;
     }
 
-    if (workbench_cursor_slot < WORKBENCH_CURSOR_HOTBAR_START) {
-        int local = workbench_cursor_slot - WORKBENCH_CURSOR_STORAGE_START;
+    if (game_state.inventory.workbench_cursor_slot < WORKBENCH_CURSOR_HOTBAR_START) {
+        int local = game_state.inventory.workbench_cursor_slot - WORKBENCH_CURSOR_STORAGE_START;
         int row = local / INVENTORY_STORAGE_COLS;
         int col = local % INVENTORY_STORAGE_COLS;
 
         if (dy < 0 && row == 0) {
             if (col < 3) {
-                workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + (2 * WORKBENCH_CRAFT_COLS) + col;
+                game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + (2 * WORKBENCH_CRAFT_COLS) + col;
             } else {
-                workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
+                game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
             }
             return;
         }
@@ -110,16 +110,16 @@ static void move_workbench_cursor(int dx, int dy) {
         }
 
         if (row >= INVENTORY_STORAGE_ROWS) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
             return;
         }
 
-        workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + (row * INVENTORY_STORAGE_COLS) + col;
+        game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + (row * INVENTORY_STORAGE_COLS) + col;
         return;
     }
 
     {
-        int col = workbench_cursor_slot - WORKBENCH_CURSOR_HOTBAR_START;
+        int col = game_state.inventory.workbench_cursor_slot - WORKBENCH_CURSOR_HOTBAR_START;
 
         col += dx;
 
@@ -132,11 +132,11 @@ static void move_workbench_cursor(int dx, int dy) {
         }
 
         if (dy < 0) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
         } else if (dy > 0) {
-            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
         } else {
-            workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
+            game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
         }
     }
 }
@@ -172,7 +172,7 @@ static void update_workbench_input(void) {
         (pressed_this_frame & PAD_CROSS) ||
         (pressed_this_frame & PAD_CIRCLE)
     ) {
-        if ((buttons & PAD_R2) && workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+        if ((buttons & PAD_R2) && game_state.inventory.workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
             quick_craft_workbench_output_to_inventory();
         } else {
             swap_workbench_held_with_cursor();
@@ -201,9 +201,9 @@ static void draw_workbench_crafting_grid(RenderContext *context) {
             context,
             start_x + (col * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
             start_y + (row * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
-            workbench_crafting_slots[i].type,
-            workbench_crafting_slots[i].count,
-            workbench_cursor_slot == i,
+            game_state.inventory.workbench_crafting_slots[i].type,
+            game_state.inventory.workbench_crafting_slots[i].count,
+            game_state.inventory.workbench_cursor_slot == i,
             0,
             900 + i
         );
@@ -228,9 +228,9 @@ static void draw_workbench_storage_grid(RenderContext *context) {
             context,
             storage_x + (col * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
             storage_y + (row * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
-            inventory_storage_blocks[i].type,
-            inventory_storage_blocks[i].count,
-            workbench_cursor_slot == WORKBENCH_CURSOR_STORAGE_START + i,
+            game_state.inventory.inventory_storage_blocks[i].type,
+            game_state.inventory.inventory_storage_blocks[i].count,
+            game_state.inventory.workbench_cursor_slot == WORKBENCH_CURSOR_STORAGE_START + i,
             0,
             1000 + i
         );
@@ -241,9 +241,9 @@ static void draw_workbench_storage_grid(RenderContext *context) {
             context,
             storage_x + (i * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
             hotbar_y,
-            hotbar_slot_blocks[i].type,
-            hotbar_slot_blocks[i].count,
-            workbench_cursor_slot == WORKBENCH_CURSOR_HOTBAR_START + i,
+            game_state.inventory.hotbar_slot_blocks[i].type,
+            game_state.inventory.hotbar_slot_blocks[i].count,
+            game_state.inventory.workbench_cursor_slot == WORKBENCH_CURSOR_HOTBAR_START + i,
             0,
             1100 + i
         );
@@ -267,7 +267,7 @@ static void draw_workbench_screen(RenderContext *context) {
         52,
         output.type,
         output.count,
-        workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT,
+        game_state.inventory.workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT,
         stack_is_empty(&output),
         930
     );
@@ -277,16 +277,16 @@ static void draw_workbench_screen(RenderContext *context) {
     draw_text(context, 56, 188, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP/CRAFT");
     draw_text(context, 56, 202, 0, "R2+X SHIFT-CRAFT  START BACK");
 
-    if (!stack_is_empty(&inventory_held_stack)) {
-        const int texture_type = block_type_to_icon_texture(inventory_held_stack.type);
+    if (!stack_is_empty(&game_state.inventory.inventory_held_stack)) {
+        const int texture_type = block_type_to_icon_texture(game_state.inventory.inventory_held_stack.type);
 
         draw_text(context, 214, 56, 0, "HAND");
         draw_inventory_slot(
             context,
             256,
             52,
-            inventory_held_stack.type,
-            inventory_held_stack.count,
+            game_state.inventory.inventory_held_stack.type,
+            game_state.inventory.inventory_held_stack.count,
             1,
             0,
             1200 + texture_type

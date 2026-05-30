@@ -266,7 +266,7 @@ static void draw_stack_count(RenderContext *context, int x, int y, int count) {
 static void draw_hotbar_slot(RenderContext *context, int slot_index, int selected) {
     const int x = HOTBAR_START_X + (slot_index * (HOTBAR_SLOT_SIZE + HOTBAR_SLOT_GAP));
     const int y = HOTBAR_Y;
-    const ItemStack *stack = &(hotbar_slot_blocks[slot_index]);
+    const ItemStack *stack = &(game_state.inventory.hotbar_slot_blocks[slot_index]);
     const int block_type = stack_is_empty(stack) ? BLOCK_AIR : stack->type;
     const int texture_type = block_type_to_icon_texture(block_type);
 
@@ -301,7 +301,7 @@ static void draw_hotbar_slot(RenderContext *context, int slot_index, int selecte
 
 static void draw_hotbar(RenderContext *context) {
     for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
-        draw_hotbar_slot(context, i, i == selected_hotbar_slot);
+        draw_hotbar_slot(context, i, i == game_state.inventory.selected_hotbar_slot);
     }
 }
 
