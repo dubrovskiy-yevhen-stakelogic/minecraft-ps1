@@ -15,13 +15,11 @@ static void get_camera_forward_direction(Vec3i *dir) {
     dir->z = (icos(game_state.player.camera_yaw) * cos_pitch) / FIXED_ONE;
 }
 
-
 static int is_valid_block_position(int x, int y, int z) {
     (void)x;
     (void)z;
     return (y >= 0 && y < WORLD_HEIGHT);
 }
-
 
 static int get_hit_face_from_empty_block(
     int empty_x,
@@ -53,7 +51,6 @@ static int get_hit_face_from_empty_block(
 
     return FACE_POS_Y;
 }
-
 
 static RaycastHit raycast_block(void) {
     RaycastHit hit;

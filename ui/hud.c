@@ -17,7 +17,6 @@ static void draw_crosshair(RenderContext *context) {
     draw_line(context, cx, cy + 2, cx, cy + 5, 0, 235, 235, 235);
 }
 
-
 static int block_type_to_icon_texture(int block_type) {
     if (block_type == BLOCK_DIRT) {
         return 1;
@@ -49,7 +48,6 @@ static int block_type_to_icon_texture(int block_type) {
 
     return -1;
 }
-
 
 static void draw_pickaxe_sprite_rows(
     RenderContext *context,
@@ -121,7 +119,6 @@ static void draw_pickaxe_sprite_rows(
     }
 }
 
-
 static void draw_pickaxe_icon(
     RenderContext *context,
     int x,
@@ -167,7 +164,6 @@ static void draw_pickaxe_icon(
     draw_pickaxe_sprite_rows(context, draw_x, draw_y, pixel_size, sprite, 16, z, 0);
 }
 
-
 static void draw_pickaxe_held_overlay(RenderContext *context) {
     static const char * const sprite[16] = {
         "................",
@@ -205,7 +201,6 @@ static void draw_pickaxe_held_overlay(RenderContext *context) {
     draw_pickaxe_sprite_rows(context, draw_x, draw_y, pixel_size, sprite, 16, 0, 0);
 }
 
-
 static void draw_item_icon(
     RenderContext *context,
     int x,
@@ -235,7 +230,6 @@ static void draw_item_icon(
     }
 }
 
-
 static void draw_stack_count(RenderContext *context, int x, int y, int count) {
     char text_buffer[4];
     int bg_w = 10;
@@ -261,7 +255,6 @@ static void draw_stack_count(RenderContext *context, int x, int y, int count) {
     draw_filled_rect(context, x - 2, y - 1, bg_w, 8, 1, 12, 12, 12);
     draw_text(context, x, y, 0, text_buffer);
 }
-
 
 static void draw_hotbar_slot(RenderContext *context, int slot_index, int selected) {
     const int x = HOTBAR_START_X + (slot_index * (HOTBAR_SLOT_SIZE + HOTBAR_SLOT_GAP));
@@ -298,13 +291,11 @@ static void draw_hotbar_slot(RenderContext *context, int slot_index, int selecte
     }
 }
 
-
 static void draw_hotbar(RenderContext *context) {
     for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
         draw_hotbar_slot(context, i, i == game_state.inventory.selected_hotbar_slot);
     }
 }
-
 
 static void draw_heart(RenderContext *context, int x, int y, int filled) {
     if (filled) {
@@ -325,7 +316,6 @@ static void draw_heart(RenderContext *context, int x, int y, int filled) {
     }
 }
 
-
 static void draw_hearts(RenderContext *context) {
     for (int i = 0; i < HEART_COUNT; i++) {
         draw_heart(
@@ -337,7 +327,6 @@ static void draw_hearts(RenderContext *context) {
     }
 }
 
-
 static void draw_held_item_in_hand(RenderContext *context) {
     const int selected_type = get_selected_hotbar_block_type();
 
@@ -348,7 +337,6 @@ static void draw_held_item_in_hand(RenderContext *context) {
         draw_item_icon(context, 246, 174, 18, (uint8_t)selected_type, 0, 1300 + selected_type);
     }
 }
-
 
 static void draw_game_hud(RenderContext *context) {
     draw_hearts(context);

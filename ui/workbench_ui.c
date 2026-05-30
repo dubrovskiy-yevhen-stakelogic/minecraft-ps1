@@ -7,22 +7,6 @@
 
 #include "workbench_ui.h"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 static void move_workbench_cursor(int dx, int dy) {
     if (game_state.inventory.workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
         int row = game_state.inventory.workbench_cursor_slot / WORKBENCH_CRAFT_COLS;
@@ -141,7 +125,6 @@ static void move_workbench_cursor(int dx, int dy) {
     }
 }
 
-
 static void update_workbench_input(void) {
     const uint16_t buttons = read_pad_buttons();
     const uint16_t pressed_this_frame = buttons & ~game_state.input.pad_previous_buttons;
@@ -186,7 +169,6 @@ static void update_workbench_input(void) {
     game_state.input.pad_previous_buttons = buttons;
 }
 
-
 static void draw_workbench_crafting_grid(RenderContext *context) {
     const int start_x = 54;
     const int start_y = 36;
@@ -211,7 +193,6 @@ static void draw_workbench_crafting_grid(RenderContext *context) {
 
     draw_text(context, 126, 58, 0, ">");
 }
-
 
 static void draw_workbench_storage_grid(RenderContext *context) {
     const int storage_x = 70;
@@ -249,7 +230,6 @@ static void draw_workbench_storage_grid(RenderContext *context) {
         );
     }
 }
-
 
 static void draw_workbench_screen(RenderContext *context) {
     const ItemStack output = get_workbench_output_stack();

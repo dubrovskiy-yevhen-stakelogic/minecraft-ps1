@@ -14,7 +14,6 @@ static void draw_menu_cloud(RenderContext *context, int x, int y, int z) {
     draw_filled_rect(context, x + 50, y + 10, 18, 8, z, 244, 248, 255);
 }
 
-
 static void draw_menu_tree(RenderContext *context, int x, int y, int block, int z) {
     draw_minecraft_texture_block(context, x + block, y + block, block, 4, z, x + y + 1);
     draw_minecraft_texture_block(context, x + block, y + block * 2, block, 4, z, x + y + 2);
@@ -26,7 +25,6 @@ static void draw_menu_tree(RenderContext *context, int x, int y, int block, int 
     draw_minecraft_texture_block(context, x + block, y + block, block, 3, z, x + y + 7);
     draw_minecraft_texture_block(context, x + block * 2, y + block, block, 3, z, x + y + 8);
 }
-
 
 static void draw_minecraft_button(
     RenderContext *context,
@@ -54,7 +52,6 @@ static void draw_minecraft_button(
         draw_filled_rect(context, x + 4, y + 4, w - 8, h - 8, 2, 86, 88, 86);
     }
 }
-
 
 static void draw_menu_background(RenderContext *context) {
     const int block = 16;
@@ -112,7 +109,6 @@ static void draw_menu_background(RenderContext *context) {
     draw_minecraft_texture_block(context, 168, 128, block, 2, 5, 34);
 }
 
-
 static void draw_menu_option(
     RenderContext *context,
     int x,
@@ -131,7 +127,6 @@ static void draw_menu_option(
     }
 }
 
-
 static void draw_pause_option(
     RenderContext *context,
     int x,
@@ -149,7 +144,6 @@ static void draw_pause_option(
         draw_text(context, x + 30, y + 5, 0, label);
     }
 }
-
 
 static void update_menu_input(void) {
     const uint16_t buttons = read_pad_buttons();
@@ -193,7 +187,6 @@ static void update_menu_input(void) {
 
     game_state.input.pad_previous_buttons = buttons;
 }
-
 
 static void update_pause_input(void) {
     const uint16_t buttons = read_pad_buttons();
@@ -311,7 +304,6 @@ static void update_pause_input(void) {
     game_state.input.pad_previous_buttons = buttons;
 }
 
-
 static void draw_menu(RenderContext *context) {
     draw_menu_background(context);
 
@@ -344,7 +336,6 @@ static void draw_menu(RenderContext *context) {
         draw_text(context, 120, 182, 0, game_state.app.system_status_text);
     }
 }
-
 
 static void draw_pause_menu(RenderContext *context) {
     draw_filled_rect(context, 0, 0, SCREEN_W, SCREEN_H, 7, 18, 18, 22);

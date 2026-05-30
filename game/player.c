@@ -40,7 +40,6 @@ static int project_breaking_world_point(
     return 1;
 }
 
-
 static ProjectedVertex interpolate_breaking_face_point(
     const ProjectedVertex *p0,
     const ProjectedVertex *p1,
@@ -56,7 +55,6 @@ static ProjectedVertex interpolate_breaking_face_point(
 
     return result;
 }
-
 
 static void draw_breaking_crack_line(
     RenderContext *context,
@@ -77,7 +75,6 @@ static void draw_breaking_crack_line(
     draw_line(context, a.x, a.y, b.x, b.y, 0, 8, 8, 8);
     draw_line(context, a.x + 1, a.y, b.x + 1, b.y, 0, 42, 42, 42);
 }
-
 
 static int get_breaking_face_vertices(ProjectedVertex out[4]) {
     const int x0 = tile_to_world_center(game_state.breaking.breaking_block_x) - BLOCK_HALF;
@@ -145,7 +142,6 @@ static int get_breaking_face_vertices(ProjectedVertex out[4]) {
     return 1;
 }
 
-
 static void draw_breaking_overlay(RenderContext *context) {
     if (!game_state.breaking.breaking_active || game_state.breaking.breaking_required_frames <= 0) {
         return;
@@ -199,7 +195,6 @@ static void draw_breaking_overlay(RenderContext *context) {
     }
 }
 
-
 static int get_surface_top_block_y_at_world_position(int world_x, int world_z) {
     return get_top_solid_block_y(
         world_to_tile(world_x),
@@ -207,14 +202,12 @@ static int get_surface_top_block_y_at_world_position(int world_x, int world_z) {
     );
 }
 
-
 static int get_player_center_top_block_y(void) {
     return get_surface_top_block_y_at_world_position(
         game_state.player.camera_pos_x,
         game_state.player.camera_pos_z
     );
 }
-
 
 static int is_player_footprint_clear_at(
     int world_x,
@@ -295,7 +288,6 @@ static int is_player_footprint_clear_at(
     return 1;
 }
 
-
 static void snap_camera_to_ground(void) {
     const int top_block_y = get_player_center_top_block_y();
 
@@ -305,7 +297,6 @@ static void snap_camera_to_ground(void) {
 
     game_state.player.camera_pos_y = block_y_to_world_top(top_block_y) + PLAYER_EYE_HEIGHT;
 }
-
 
 static void reset_camera(void) {
     game_state.player.fly_mode_enabled = 0;
@@ -321,7 +312,6 @@ static void reset_camera(void) {
     game_state.world.mesh_center_tile_z = 999999;
     game_state.world.mesh_dirty = 1;
 }
-
 
 static int is_walk_target_valid(int next_x, int next_z) {
     const int current_top_block_y = get_player_center_top_block_y();
@@ -367,7 +357,6 @@ static int is_walk_target_valid(int next_x, int next_z) {
     return 1;
 }
 
-
 static void try_walk_move(int delta_x, int delta_z) {
     const int next_x = game_state.player.camera_pos_x + delta_x;
     const int next_z = game_state.player.camera_pos_z + delta_z;
@@ -381,7 +370,6 @@ static void try_walk_move(int delta_x, int delta_z) {
 
     snap_camera_to_ground();
 }
-
 
 static int get_block_hardness_frames(int block_type) {
     if (block_type == BLOCK_SAND) {
@@ -415,7 +403,6 @@ static int get_block_hardness_frames(int block_type) {
     return BLOCK_BREAK_MIN_FRAMES;
 }
 
-
 static void reset_block_breaking(void) {
     game_state.breaking.breaking_active = 0;
     game_state.breaking.breaking_block_x = 0;
@@ -426,7 +413,6 @@ static void reset_block_breaking(void) {
     game_state.breaking.breaking_progress = 0;
     game_state.breaking.breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
 }
-
 
 static void update_block_breaking(int is_break_button_down) {
     const RaycastHit hit = raycast_block();
@@ -483,7 +469,6 @@ static void update_block_breaking(int is_break_button_down) {
     }
 }
 
-
 static int block_intersects_player_footprint(int block_x, int block_y, int block_z) {
     const int player_top_block_y = get_player_center_top_block_y();
 
@@ -515,7 +500,6 @@ static int block_intersects_player_footprint(int block_x, int block_y, int block
 
     return 1;
 }
-
 
 static void add_target_block(void) {
     const RaycastHit hit = raycast_block();
@@ -554,7 +538,6 @@ static void add_target_block(void) {
     set_block_type(hit.place_x, hit.place_y, hit.place_z, selected_block_type);
     consume_selected_hotbar_block();
 }
-
 
 static void update_input(void) {
     const uint16_t buttons = read_pad_buttons();

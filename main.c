@@ -261,7 +261,6 @@ enum {
     FACE_POS_Y = 5
 };
 
-
 #include "game/game_state.h"
 
 static GameState game_state = {
@@ -331,17 +330,7 @@ static GameState game_state = {
  * GameState explicitly to systems.
  */
 
-
-
-
-
-
-
-
-
-
 /* SaveData must fit after memory card header inside 1 block. */
-
 
 static void snap_camera_to_ground(void);
 static int save_game_to_memory_card(void);
@@ -413,16 +402,10 @@ static void quick_move_workbench_cursor_to_hotbar(void);
  * We interpolate between values, so angle resolution is 4096 steps.
  */
 
-
-
-
-
 /*
  * C integer division truncates toward zero.
  * We need floor division so negative world coordinates map to correct tiles.
  */
-
-
 
 /*
  * World Y mapping:
@@ -430,28 +413,6 @@ static void quick_move_workbench_cursor_to_hotbar(void);
  * block_y = 1 occupies [0, 48]
  * ...
  */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 static void clear_bytes(uint8_t *data, int size) {
     for (int i = 0; i < size; i++) {
@@ -747,88 +708,6 @@ static int load_game_from_memory_card(void) {
     return 1;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 static ItemStack *get_inventory_cursor_stack_ptr(void) {
     if (game_state.inventory.inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
         return &(game_state.inventory.inventory_storage_blocks[game_state.inventory.inventory_cursor_slot]);
@@ -844,38 +723,6 @@ static ItemStack *get_inventory_cursor_stack_ptr(void) {
 
     return &(game_state.inventory.crafting_slots[0]);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 static void start_new_game(void) {
     reset_world_edits();
@@ -902,8 +749,6 @@ static void start_loaded_game(void) {
         set_system_status("LOAD FAILED", 120);
     }
 }
-
-
 
 /*
  * Stage 3 UI split.

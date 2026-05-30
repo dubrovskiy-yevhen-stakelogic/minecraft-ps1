@@ -15,7 +15,6 @@ static int get_block_drop_type(int block_type) {
     return block_type;
 }
 
-
 static void reset_dropped_items(void) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
         game_state.dropped.dropped_items[i].active = 0;
@@ -27,7 +26,6 @@ static void reset_dropped_items(void) {
         game_state.dropped.dropped_items[i].bob_frame = 0;
     }
 }
-
 
 static void spawn_dropped_item(int block_type, int block_x, int block_y, int block_z) {
     const int drop_type = get_block_drop_type(block_type);
@@ -54,7 +52,6 @@ static void spawn_dropped_item(int block_type, int block_x, int block_y, int blo
      */
     add_items_to_inventory((uint8_t)drop_type, 1);
 }
-
 
 static void update_dropped_items(void) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {
@@ -83,7 +80,6 @@ static void update_dropped_items(void) {
         }
     }
 }
-
 
 static int project_world_position(
     int world_x,
@@ -131,7 +127,6 @@ static int project_world_position(
     return 1;
 }
 
-
 static int dropped_item_texture_type(uint8_t block_type) {
     if (block_type == BLOCK_DIRT) {
         return 1;
@@ -163,7 +158,6 @@ static int dropped_item_texture_type(uint8_t block_type) {
 
     return -1;
 }
-
 
 static void draw_dropped_item_icon(
     RenderContext *context,
@@ -211,7 +205,6 @@ static void draw_dropped_item_icon(
         draw_line(context, x + size - 3, y + 2, x + 2, y + size - 3, ot_z, 64, 38, 18);
     }
 }
-
 
 static void draw_dropped_items(RenderContext *context) {
     for (int i = 0; i < MAX_DROPPED_ITEMS; i++) {

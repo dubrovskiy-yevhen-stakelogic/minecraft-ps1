@@ -11,26 +11,21 @@ static int world_to_tile(int value) {
     return floor_div(value + BLOCK_HALF, BLOCK_SIZE);
 }
 
-
 static int tile_to_world_center(int tile) {
     return tile * BLOCK_SIZE;
 }
-
 
 static int world_to_block_y(int value) {
     return floor_div(value + BLOCK_SIZE, BLOCK_SIZE);
 }
 
-
 static int block_y_to_world_min(int block_y) {
     return -BLOCK_SIZE + (block_y * BLOCK_SIZE);
 }
 
-
 static int block_y_to_world_top(int block_y) {
     return block_y_to_world_min(block_y) + BLOCK_SIZE;
 }
-
 
 static int get_generated_block_type(int x, int y, int z) {
     (void)x;
@@ -51,7 +46,6 @@ static int get_generated_block_type(int x, int y, int z) {
     return BLOCK_AIR;
 }
 
-
 static int get_block_edit_index(int x, int y, int z) {
     for (int i = 0; i < game_state.world.block_edit_count; i++) {
         if (
@@ -66,7 +60,6 @@ static int get_block_edit_index(int x, int y, int z) {
     return -1;
 }
 
-
 static int get_block_type(int x, int y, int z) {
     const int edit_index = get_block_edit_index(x, y, z);
 
@@ -76,7 +69,6 @@ static int get_block_type(int x, int y, int z) {
 
     return get_generated_block_type(x, y, z);
 }
-
 
 static void remove_block_edit_at_index(int index) {
     if (index < 0 || index >= game_state.world.block_edit_count) {
@@ -89,7 +81,6 @@ static void remove_block_edit_at_index(int index) {
         game_state.world.block_edits[index] = game_state.world.block_edits[game_state.world.block_edit_count];
     }
 }
-
 
 static void set_block_type(int x, int y, int z, int type) {
     if (y < 0 || y >= WORLD_HEIGHT) {
@@ -127,7 +118,6 @@ static void set_block_type(int x, int y, int z, int type) {
     game_state.world.mesh_dirty = 1;
 }
 
-
 static int get_top_solid_block_y(int tile_x, int tile_z) {
     for (int y = WORLD_HEIGHT - 1; y >= 0; y--) {
         if (get_block_type(tile_x, y, tile_z) != BLOCK_AIR) {
@@ -138,7 +128,6 @@ static int get_top_solid_block_y(int tile_x, int tile_z) {
     return -1;
 }
 
-
 static void clear_vertex_lookup(void) {
     for (int y = 0; y < GRID_Y_LINES; y++) {
         for (int z = 0; z < GRID_VERTICES_PER_SIDE; z++) {
@@ -148,7 +137,6 @@ static void clear_vertex_lookup(void) {
         }
     }
 }
-
 
 static void build_local_block_cache(int center_tile_x, int center_tile_z) {
     const int start_tile_x = center_tile_x - VIEW_RADIUS;
@@ -199,7 +187,6 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
     }
 }
 
-
 static int get_local_block_type(int visible_x, int y, int visible_z) {
     /*
      * visible_x/visible_z are usually 0..16.
@@ -222,7 +209,6 @@ static int get_local_block_type(int visible_x, int y, int visible_z) {
 
     return game_state.world.local_blocks[y][local_z][local_x];
 }
-
 
 static int add_grid_vertex(
     int local_x_line,
@@ -252,7 +238,6 @@ static int add_grid_vertex(
 
     return *lookup_entry;
 }
-
 
 static void push_face_by_grid_vertices(
     int x0,
@@ -311,7 +296,6 @@ static void push_face_by_grid_vertices(
 
     game_state.world.mesh_face_count++;
 }
-
 
 static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uint8_t *b) {
     if (block_type == BLOCK_GRASS) {
@@ -459,7 +443,6 @@ static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uin
     *b = 180;
 }
 
-
 static void push_block_face(
     int local_x,
     int block_y,
@@ -582,7 +565,6 @@ static void push_block_face(
     }
 }
 
-
 static void build_world_mesh(int center_tile_x, int center_tile_z) {
     const int start_tile_x = center_tile_x - VIEW_RADIUS;
     const int start_tile_z = center_tile_z - VIEW_RADIUS;
@@ -689,7 +671,6 @@ static void build_world_mesh(int center_tile_x, int center_tile_z) {
     game_state.world.mesh_dirty = 0;
 }
 
-
 static void rebuild_mesh_if_needed(void) {
     const int center_tile_x = world_to_tile(game_state.player.camera_pos_x);
     const int center_tile_z = world_to_tile(game_state.player.camera_pos_z);
@@ -702,7 +683,6 @@ static void rebuild_mesh_if_needed(void) {
         build_world_mesh(center_tile_x, center_tile_z);
     }
 }
-
 
 static void transform_all_vertices(void) {
     const int sin_y = isin(-game_state.player.camera_yaw);
@@ -730,7 +710,6 @@ static void transform_all_vertices(void) {
     }
 }
 
-
 static int depth_to_ot(int depth) {
     int ot_z = depth / 4;
 
@@ -745,14 +724,12 @@ static int depth_to_ot(int depth) {
     return ot_z;
 }
 
-
 static uint8_t fog_blend_channel(uint8_t color, uint8_t fog_color, int fog_amount) {
     const int color_part = ((int)color * (256 - fog_amount));
     const int fog_part = ((int)fog_color * fog_amount);
 
     return (uint8_t)((color_part + fog_part) >> 8);
 }
-
 
 static void apply_distance_fog(
     int depth,
@@ -785,7 +762,6 @@ static void apply_distance_fog(
     *b = fog_blend_channel(*b, FOG_SKY_B, fog_amount);
 }
 
-
 static Vec3i intersect_near_plane(const Vec3i *a, const Vec3i *b) {
     Vec3i result;
 
@@ -804,7 +780,6 @@ static Vec3i intersect_near_plane(const Vec3i *a, const Vec3i *b) {
 
     return result;
 }
-
 
 static int clip_triangle_to_near_plane(const Vec3i input[3], Vec3i output[4]) {
     int output_count = 0;
@@ -833,7 +808,6 @@ static int clip_triangle_to_near_plane(const Vec3i input[3], Vec3i output[4]) {
     return output_count;
 }
 
-
 static void project_camera_vertex(const Vec3i *camera, ProjectedVertex *projected) {
     int z = camera->z;
 
@@ -846,11 +820,9 @@ static void project_camera_vertex(const Vec3i *camera, ProjectedVertex *projecte
     projected->z = camera->z;
 }
 
-
 static int triangle_depth(const Vec3i *a, const Vec3i *b, const Vec3i *c) {
     return (a->z + b->z + c->z) / 3;
 }
-
 
 static void draw_projected_triangle(
     RenderContext *context,
@@ -874,7 +846,6 @@ static void draw_projected_triangle(
         c->x, c->y
     );
 }
-
 
 static void draw_camera_triangle_clipped(
     RenderContext *context,
@@ -952,7 +923,6 @@ static void draw_camera_triangle_clipped(
     }
 }
 
-
 static int face_center_z(const MeshFace *face) {
     return (
         game_state.world.camera_vertices[face->v[0]].z +
@@ -961,7 +931,6 @@ static int face_center_z(const MeshFace *face) {
         game_state.world.camera_vertices[face->v[3]].z
     ) / 4;
 }
-
 
 static int face_is_outside_frustum(const MeshFace *face) {
     int all_behind = 1;
@@ -1018,7 +987,6 @@ static int face_is_outside_frustum(const MeshFace *face) {
     );
 }
 
-
 static int face_is_safe_for_textured_quad(
     const Vec3i *v0,
     const Vec3i *v1,
@@ -1038,7 +1006,6 @@ static int face_is_safe_for_textured_quad(
     );
 }
 
-
 static int log_face_texture_u(int face_type) {
     if (face_type == FACE_POS_Y || face_type == FACE_NEG_Y) {
         return LOG_TOP_U;
@@ -1046,7 +1013,6 @@ static int log_face_texture_u(int face_type) {
 
     return LOG_SIDE_U;
 }
-
 
 static void draw_projected_textured_triangle(
     RenderContext *context,
@@ -1083,7 +1049,6 @@ static void draw_projected_textured_triangle(
     setTPage(poly, 2, 0, TEXTURE_ATLAS_X, TEXTURE_ATLAS_Y);
     setClut(poly, 0, 0);
 }
-
 
 static void draw_camera_textured_log_quad(
     RenderContext *context,
@@ -1154,7 +1119,6 @@ static void draw_camera_textured_log_quad(
     );
 }
 
-
 static void draw_mesh(RenderContext *context) {
     for (int i = 0; i < game_state.world.mesh_face_count; i++) {
         const MeshFace *face = &(game_state.world.mesh_faces[i]);
@@ -1191,7 +1155,6 @@ static void draw_mesh(RenderContext *context) {
     }
 }
 
-
 static void draw_texture_speckles(
     RenderContext *context,
     int x,
@@ -1212,7 +1175,6 @@ static void draw_texture_speckles(
         draw_filled_rect(context, px, py, size, size, z, r, g, b);
     }
 }
-
 
 static void draw_minecraft_texture_block(
     RenderContext *context,

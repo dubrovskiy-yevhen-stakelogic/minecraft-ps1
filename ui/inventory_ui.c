@@ -134,25 +134,6 @@ static void move_inventory_cursor(int dx, int dy) {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 static void draw_inventory_slot(
     RenderContext *context,
     int x,
@@ -195,7 +176,6 @@ static void draw_inventory_slot(
     }
 }
 
-
 static void draw_inventory_grid(RenderContext *context) {
     for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
         const int row = i / INVENTORY_STORAGE_COLS;
@@ -232,7 +212,6 @@ static void draw_inventory_grid(RenderContext *context) {
         );
     }
 }
-
 
 static void draw_inventory_crafting_area(RenderContext *context) {
     const ItemStack output = get_crafting_output_stack();
@@ -293,7 +272,6 @@ static void draw_inventory_crafting_area(RenderContext *context) {
     );
 }
 
-
 static void draw_inventory_armor_area(RenderContext *context) {
     draw_text(context, 26, 42, 0, "ARMOR");
     draw_inventory_slot(context, 28, 58, BLOCK_AIR, 0, 0, 1, 700);
@@ -302,7 +280,6 @@ static void draw_inventory_armor_area(RenderContext *context) {
     draw_inventory_slot(context, 28, 118, BLOCK_AIR, 0, 0, 1, 703);
 }
 
-
 static void draw_inventory_player_preview(RenderContext *context) {
     draw_panel(context, 74, 40, 84, 44, 2, 42, 50, 60, 174, 174, 174);
     draw_minecraft_texture_block(context, 84, 50, 18, 0, 1, 740);
@@ -310,7 +287,6 @@ static void draw_inventory_player_preview(RenderContext *context) {
     draw_minecraft_texture_block(context, 124, 50, 18, 2, 1, 742);
     draw_text(context, 82, 72, 0, "BLOCK PLAYER");
 }
-
 
 static void draw_inventory_screen(RenderContext *context) {
     draw_filled_rect(context, 0, 0, SCREEN_W, SCREEN_H, 7, 16, 16, 20);
@@ -349,7 +325,6 @@ static void draw_inventory_screen(RenderContext *context) {
         draw_text(context, 122, 226, 0, game_state.app.system_status_text);
     }
 }
-
 
 static void update_inventory_input(void) {
     const uint16_t buttons = read_pad_buttons();

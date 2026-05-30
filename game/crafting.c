@@ -57,7 +57,6 @@ static ItemStack get_crafting_output_stack(void) {
     return result;
 }
 
-
 static void consume_current_crafting_inputs(const ItemStack *output) {
     if (output->type == BLOCK_PLANKS) {
         for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
@@ -78,7 +77,6 @@ static void consume_current_crafting_inputs(const ItemStack *output) {
         }
     }
 }
-
 
 static void take_crafting_output(void) {
     const ItemStack output = get_crafting_output_stack();
@@ -102,7 +100,6 @@ static void take_crafting_output(void) {
         set_system_status("CRAFTED PLANKS", 55);
     }
 }
-
 
 static int quick_craft_output_to_inventory(void) {
     int crafted_count = 0;
@@ -142,7 +139,6 @@ static int quick_craft_output_to_inventory(void) {
     return 0;
 }
 
-
 static int is_workbench_2x2_plank_recipe_at(int start_col, int start_row) {
     for (int row = 0; row < WORKBENCH_CRAFT_ROWS; row++) {
         for (int col = 0; col < WORKBENCH_CRAFT_COLS; col++) {
@@ -169,7 +165,6 @@ static int is_workbench_2x2_plank_recipe_at(int start_col, int start_row) {
     return 1;
 }
 
-
 static int find_workbench_2x2_plank_recipe_start(void) {
     for (int row = 0; row <= 1; row++) {
         for (int col = 0; col <= 1; col++) {
@@ -181,7 +176,6 @@ static int find_workbench_2x2_plank_recipe_start(void) {
 
     return -1;
 }
-
 
 static ItemStack get_workbench_output_stack(void) {
     ItemStack result;
@@ -223,7 +217,6 @@ static ItemStack get_workbench_output_stack(void) {
     return result;
 }
 
-
 static void consume_current_workbench_inputs(const ItemStack *output) {
     if (output->type == BLOCK_PLANKS) {
         for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
@@ -259,7 +252,6 @@ static void consume_current_workbench_inputs(const ItemStack *output) {
     }
 }
 
-
 static void take_workbench_output(void) {
     const ItemStack output = get_workbench_output_stack();
 
@@ -282,7 +274,6 @@ static void take_workbench_output(void) {
         set_system_status("CRAFTED PLANKS", 55);
     }
 }
-
 
 static int quick_craft_workbench_output_to_inventory(void) {
     int crafted_count = 0;

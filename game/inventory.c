@@ -20,11 +20,9 @@ static void normalize_stack(ItemStack *stack) {
     }
 }
 
-
 static int stack_is_empty(const ItemStack *stack) {
     return stack->type == BLOCK_AIR || stack->count == 0;
 }
-
 
 static int is_placeable_block_type(int item_type) {
     return
@@ -36,7 +34,6 @@ static int is_placeable_block_type(int item_type) {
         item_type == BLOCK_PLANKS ||
         item_type == BLOCK_WORKBENCH;
 }
-
 
 static int add_to_existing_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
     int remaining = amount;
@@ -58,7 +55,6 @@ static int add_to_existing_stack_array(ItemStack *stacks, int count, uint8_t typ
     return remaining;
 }
 
-
 static int add_to_empty_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
     int remaining = amount;
 
@@ -78,7 +74,6 @@ static int add_to_empty_stack_array(ItemStack *stacks, int count, uint8_t type, 
 
     return remaining;
 }
-
 
 static int get_inventory_accept_capacity(uint8_t type) {
     int capacity = 0;
@@ -105,7 +100,6 @@ static int get_inventory_accept_capacity(uint8_t type) {
 
     return capacity;
 }
-
 
 static int add_items_to_inventory(uint8_t type, int amount) {
     int remaining;
@@ -149,7 +143,6 @@ static int add_items_to_inventory(uint8_t type, int amount) {
     return remaining;
 }
 
-
 static int get_selected_hotbar_block_type(void) {
     if (game_state.inventory.selected_hotbar_slot < 0 || game_state.inventory.selected_hotbar_slot >= HOTBAR_SLOT_COUNT) {
         return BLOCK_AIR;
@@ -161,7 +154,6 @@ static int get_selected_hotbar_block_type(void) {
 
     return game_state.inventory.hotbar_slot_blocks[game_state.inventory.selected_hotbar_slot].type;
 }
-
 
 static void consume_selected_hotbar_block(void) {
     ItemStack *stack;
@@ -183,7 +175,6 @@ static void consume_selected_hotbar_block(void) {
     normalize_stack(stack);
 }
 
-
 static void select_previous_hotbar_slot(void) {
     game_state.inventory.selected_hotbar_slot--;
 
@@ -192,7 +183,6 @@ static void select_previous_hotbar_slot(void) {
     }
 }
 
-
 static void select_next_hotbar_slot(void) {
     game_state.inventory.selected_hotbar_slot++;
 
@@ -200,7 +190,6 @@ static void select_next_hotbar_slot(void) {
         game_state.inventory.selected_hotbar_slot = 0;
     }
 }
-
 
 static ItemStack *get_workbench_cursor_stack_ptr(void) {
     if (game_state.inventory.workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
@@ -213,7 +202,6 @@ static ItemStack *get_workbench_cursor_stack_ptr(void) {
 
     return &(game_state.inventory.hotbar_slot_blocks[game_state.inventory.workbench_cursor_slot - WORKBENCH_CURSOR_HOTBAR_START]);
 }
-
 
 static void reset_inventory_items(void) {
     for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
@@ -256,7 +244,6 @@ static void reset_inventory_items(void) {
     game_state.inventory.inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
     game_state.inventory.selected_hotbar_slot = 0;
 }
-
 
 static void merge_or_swap_inventory_held_with_slot(ItemStack *slot) {
     if (stack_is_empty(&game_state.inventory.inventory_held_stack)) {
@@ -306,7 +293,6 @@ static void merge_or_swap_inventory_held_with_slot(ItemStack *slot) {
     }
 }
 
-
 static void swap_inventory_held_with_cursor(void) {
     ItemStack *slot;
 
@@ -318,7 +304,6 @@ static void swap_inventory_held_with_cursor(void) {
     slot = get_inventory_cursor_stack_ptr();
     merge_or_swap_inventory_held_with_slot(slot);
 }
-
 
 static void quick_move_inventory_slot_to_hotbar(void) {
     ItemStack *slot = get_inventory_cursor_stack_ptr();
@@ -338,7 +323,6 @@ static void quick_move_inventory_slot_to_hotbar(void) {
     set_system_status("MOVED TO HOTBAR", 55);
 }
 
-
 static int can_add_stack_to_hand(const ItemStack *stack) {
     if (stack_is_empty(stack)) {
         return 0;
@@ -355,7 +339,6 @@ static int can_add_stack_to_hand(const ItemStack *stack) {
     return (game_state.inventory.inventory_held_stack.count + stack->count) <= STACK_MAX_COUNT;
 }
 
-
 static void add_stack_to_hand(const ItemStack *stack) {
     if (stack_is_empty(&game_state.inventory.inventory_held_stack)) {
         game_state.inventory.inventory_held_stack = *stack;
@@ -369,7 +352,6 @@ static void add_stack_to_hand(const ItemStack *stack) {
     }
 }
 
-
 static void swap_workbench_held_with_cursor(void) {
     ItemStack *slot;
 
@@ -381,7 +363,6 @@ static void swap_workbench_held_with_cursor(void) {
     slot = get_workbench_cursor_stack_ptr();
     merge_or_swap_inventory_held_with_slot(slot);
 }
-
 
 static void quick_move_workbench_cursor_to_hotbar(void) {
     ItemStack *slot;
