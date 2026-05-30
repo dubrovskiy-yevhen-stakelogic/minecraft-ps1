@@ -2,16 +2,16 @@
  * engine/ps1_input.c
  *
  * Low-level gamepad input.
- * Uses the existing pad_buffers storage from main.c in this transitional stage.
+ * Uses the existing game_state.input.pad_buffers storage from main.c in this transitional stage.
  */
 
 #include "ps1_input.h"
 
 void init_input(void) {
     InitPAD(
-        pad_buffers[0],
+        game_state.input.pad_buffers[0],
         PAD_BUFFER_SIZE,
-        pad_buffers[1],
+        game_state.input.pad_buffers[1],
         PAD_BUFFER_SIZE
     );
 
@@ -20,7 +20,7 @@ void init_input(void) {
 }
 
 uint16_t read_pad_buttons(void) {
-    PADTYPE *pad = (PADTYPE *)pad_buffers[0];
+    PADTYPE *pad = (PADTYPE *)game_state.input.pad_buffers[0];
 
     if (pad->stat != 0) {
         return 0;

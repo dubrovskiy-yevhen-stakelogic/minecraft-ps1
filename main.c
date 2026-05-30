@@ -330,30 +330,14 @@ static GameState game_state = {
  * risky rewrite. Later stages should delete these one group at a time and pass
  * GameState explicitly to systems.
  */
-#define ctx game_state.render.ctx
-
-#define mesh_vertices game_state.world.mesh_vertices
-#define camera_vertices game_state.world.camera_vertices
-#define mesh_faces game_state.world.mesh_faces
-#define mesh_vertex_count game_state.world.mesh_vertex_count
-#define mesh_face_count game_state.world.mesh_face_count
-#define mesh_center_tile_x game_state.world.mesh_center_tile_x
-#define mesh_center_tile_z game_state.world.mesh_center_tile_z
-#define mesh_dirty game_state.world.mesh_dirty
-#define vertex_lookup game_state.world.vertex_lookup
-#define local_blocks game_state.world.local_blocks
-#define block_edits game_state.world.block_edits
-#define block_edit_count game_state.world.block_edit_count
-
-#define pad_buffers game_state.input.pad_buffers
-#define pad_previous_buttons game_state.input.pad_previous_buttons
 
 
 
 
 
 
-#define save_buffer game_state.save.save_buffer
+
+
 
 
 /* SaveData must fit after memory card header inside 1 block. */
@@ -505,11 +489,11 @@ static void tick_system_status(void) {
 
 static void update_clear_color_for_game(void) {
     if (game_state.app.fog_enabled) {
-        setRGB0(&(ctx.buffers[0].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
-        setRGB0(&(ctx.buffers[1].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
+        setRGB0(&(game_state.render.ctx.buffers[0].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
+        setRGB0(&(game_state.render.ctx.buffers[1].draw_env), FOG_SKY_R, FOG_SKY_G, FOG_SKY_B);
     } else {
-        setRGB0(&(ctx.buffers[0].draw_env), SKY_R, SKY_G, SKY_B);
-        setRGB0(&(ctx.buffers[1].draw_env), SKY_R, SKY_G, SKY_B);
+        setRGB0(&(game_state.render.ctx.buffers[0].draw_env), SKY_R, SKY_G, SKY_B);
+        setRGB0(&(game_state.render.ctx.buffers[1].draw_env), SKY_R, SKY_G, SKY_B);
     }
 }
 
@@ -526,10 +510,10 @@ static void init_memory_card(void) {
 }
 
 static void reset_world_edits(void) {
-    block_edit_count = 0;
-    mesh_center_tile_x = 999999;
-    mesh_center_tile_z = 999999;
-    mesh_dirty = 1;
+    game_state.world.block_edit_count = 0;
+    game_state.world.mesh_center_tile_x = 999999;
+    game_state.world.mesh_center_tile_z = 999999;
+    game_state.world.mesh_dirty = 1;
 }
 
 static void write_save_icon_header(uint8_t *buffer) {
@@ -565,11 +549,11 @@ static void fill_save_data(SaveData *save) {
     save->save_camera_pitch = game_state.player.camera_pitch;
     save->save_fly_mode_enabled = game_state.player.fly_mode_enabled;
 
-    save->save_block_edit_count = block_edit_count;
+    save->save_block_edit_count = game_state.world.block_edit_count;
 
     for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
-        if (i < block_edit_count) {
-            save->save_block_edits[i] = block_edits[i];
+        if (i < game_state.world.block_edit_count) {
+            save->save_block_edits[i] = game_state.world.block_edits[i];
         } else {
             save->save_block_edits[i].x = 0;
             save->save_block_edits[i].y = 0;
@@ -620,43 +604,43 @@ static void apply_save_data(const SaveData *save) {
     );
     game_state.player.fly_mode_enabled = save->save_fly_mode_enabled ? 1 : 0;
 
-    block_edit_count = save->save_block_edit_count;
+    game_state.world.block_edit_count = save->save_block_edit_count;
 
     for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
-        if (i < block_edit_count) {
-            block_edits[i] = save->save_block_edits[i];
+        if (i < game_state.world.block_edit_count) {
+            game_state.world.block_edits[i] = save->save_block_edits[i];
 
-            if (block_edits[i].y < 0) {
-                block_edits[i].y = 0;
+            if (game_state.world.block_edits[i].y < 0) {
+                game_state.world.block_edits[i].y = 0;
             }
 
-            if (block_edits[i].y >= WORLD_HEIGHT) {
-                block_edits[i].y = WORLD_HEIGHT - 1;
+            if (game_state.world.block_edits[i].y >= WORLD_HEIGHT) {
+                game_state.world.block_edits[i].y = WORLD_HEIGHT - 1;
             }
 
             if (
-                block_edits[i].type != BLOCK_AIR &&
-                block_edits[i].type != BLOCK_DIRT &&
-                block_edits[i].type != BLOCK_GRASS &&
-                block_edits[i].type != BLOCK_STONE &&
-                block_edits[i].type != BLOCK_SAND &&
-                block_edits[i].type != BLOCK_LOG &&
-                block_edits[i].type != BLOCK_PLANKS &&
-                block_edits[i].type != BLOCK_WORKBENCH
+                game_state.world.block_edits[i].type != BLOCK_AIR &&
+                game_state.world.block_edits[i].type != BLOCK_DIRT &&
+                game_state.world.block_edits[i].type != BLOCK_GRASS &&
+                game_state.world.block_edits[i].type != BLOCK_STONE &&
+                game_state.world.block_edits[i].type != BLOCK_SAND &&
+                game_state.world.block_edits[i].type != BLOCK_LOG &&
+                game_state.world.block_edits[i].type != BLOCK_PLANKS &&
+                game_state.world.block_edits[i].type != BLOCK_WORKBENCH
             ) {
-                block_edits[i].type = BLOCK_DIRT;
+                game_state.world.block_edits[i].type = BLOCK_DIRT;
             }
         } else {
-            block_edits[i].x = 0;
-            block_edits[i].y = 0;
-            block_edits[i].z = 0;
-            block_edits[i].type = BLOCK_AIR;
+            game_state.world.block_edits[i].x = 0;
+            game_state.world.block_edits[i].y = 0;
+            game_state.world.block_edits[i].z = 0;
+            game_state.world.block_edits[i].type = BLOCK_AIR;
         }
     }
 
-    mesh_center_tile_x = 999999;
-    mesh_center_tile_z = 999999;
-    mesh_dirty = 1;
+    game_state.world.mesh_center_tile_x = 999999;
+    game_state.world.mesh_center_tile_z = 999999;
+    game_state.world.mesh_dirty = 1;
 
     if (!game_state.player.fly_mode_enabled) {
         snap_camera_to_ground();
@@ -695,13 +679,13 @@ static int save_game_to_memory_card(void) {
     int fd;
     int written;
 
-    clear_bytes(save_buffer, SAVE_BLOCK_SIZE);
-    write_save_icon_header(save_buffer);
+    clear_bytes(game_state.save.save_buffer, SAVE_BLOCK_SIZE);
+    write_save_icon_header(game_state.save.save_buffer);
 
     fill_save_data(&save);
 
     copy_bytes(
-        &(save_buffer[SAVE_DATA_OFFSET]),
+        &(game_state.save.save_buffer[SAVE_DATA_OFFSET]),
         (const uint8_t *)&save,
         (int)sizeof(SaveData)
     );
@@ -722,7 +706,7 @@ static int save_game_to_memory_card(void) {
         return 0;
     }
 
-    written = write(fd, save_buffer, SAVE_BLOCK_SIZE);
+    written = write(fd, game_state.save.save_buffer, SAVE_BLOCK_SIZE);
     close(fd);
 
     return written == SAVE_BLOCK_SIZE;
@@ -733,7 +717,7 @@ static int load_game_from_memory_card(void) {
     int fd;
     int bytes_read;
 
-    clear_bytes(save_buffer, SAVE_BLOCK_SIZE);
+    clear_bytes(game_state.save.save_buffer, SAVE_BLOCK_SIZE);
 
     fd = open(SAVE_FILE_PATH, FILE_MODE_READ);
 
@@ -741,7 +725,7 @@ static int load_game_from_memory_card(void) {
         return 0;
     }
 
-    bytes_read = read(fd, save_buffer, SAVE_BLOCK_SIZE);
+    bytes_read = read(fd, game_state.save.save_buffer, SAVE_BLOCK_SIZE);
     close(fd);
 
     if (bytes_read < (SAVE_DATA_OFFSET + (int)sizeof(SaveData))) {
@@ -750,7 +734,7 @@ static int load_game_from_memory_card(void) {
 
     copy_bytes(
         (uint8_t *)&save,
-        &(save_buffer[SAVE_DATA_OFFSET]),
+        &(game_state.save.save_buffer[SAVE_DATA_OFFSET]),
         (int)sizeof(SaveData)
     );
 
@@ -943,7 +927,7 @@ int main(int argc, const char **argv) {
     /*
      * Sky-ish background.
      */
-    setup_context(&ctx, SCREEN_W, SCREEN_H, SKY_R, SKY_G, SKY_B);
+    setup_context(&game_state.render.ctx, SCREEN_W, SCREEN_H, SKY_R, SKY_G, SKY_B);
     terrain_atlas_upload();
     init_input();
     init_memory_card();
@@ -958,8 +942,8 @@ int main(int argc, const char **argv) {
 
         if (game_state.app.app_state == APP_STATE_MENU) {
             update_menu_input();
-            draw_menu(&ctx);
-            flip_buffers(&ctx);
+            draw_menu(&game_state.render.ctx);
+            flip_buffers(&game_state.render.ctx);
             continue;
         }
 
@@ -967,24 +951,24 @@ int main(int argc, const char **argv) {
             update_pause_input();
             rebuild_mesh_if_needed();
             transform_all_vertices();
-            draw_mesh(&ctx);
-            draw_dropped_items(&ctx);
-            draw_pause_menu(&ctx);
-            flip_buffers(&ctx);
+            draw_mesh(&game_state.render.ctx);
+            draw_dropped_items(&game_state.render.ctx);
+            draw_pause_menu(&game_state.render.ctx);
+            flip_buffers(&game_state.render.ctx);
             continue;
         }
 
         if (game_state.app.app_state == APP_STATE_INVENTORY) {
             update_inventory_input();
-            draw_inventory_screen(&ctx);
-            flip_buffers(&ctx);
+            draw_inventory_screen(&game_state.render.ctx);
+            flip_buffers(&game_state.render.ctx);
             continue;
         }
 
         if (game_state.app.app_state == APP_STATE_WORKBENCH) {
             update_workbench_input();
-            draw_workbench_screen(&ctx);
-            flip_buffers(&ctx);
+            draw_workbench_screen(&game_state.render.ctx);
+            flip_buffers(&game_state.render.ctx);
             continue;
         }
 
@@ -992,14 +976,14 @@ int main(int argc, const char **argv) {
 
         rebuild_mesh_if_needed();
         transform_all_vertices();
-        draw_mesh(&ctx);
-        draw_dropped_items(&ctx);
-        draw_breaking_overlay(&ctx);
-        draw_crosshair(&ctx);
-        draw_held_item_in_hand(&ctx);
-        draw_game_hud(&ctx);
+        draw_mesh(&game_state.render.ctx);
+        draw_dropped_items(&game_state.render.ctx);
+        draw_breaking_overlay(&game_state.render.ctx);
+        draw_crosshair(&game_state.render.ctx);
+        draw_held_item_in_hand(&game_state.render.ctx);
+        draw_game_hud(&game_state.render.ctx);
 
-        flip_buffers(&ctx);
+        flip_buffers(&game_state.render.ctx);
     }
 
     return 0;

@@ -53,11 +53,11 @@ static int get_generated_block_type(int x, int y, int z) {
 
 
 static int get_block_edit_index(int x, int y, int z) {
-    for (int i = 0; i < block_edit_count; i++) {
+    for (int i = 0; i < game_state.world.block_edit_count; i++) {
         if (
-            block_edits[i].x == x &&
-            block_edits[i].y == y &&
-            block_edits[i].z == z
+            game_state.world.block_edits[i].x == x &&
+            game_state.world.block_edits[i].y == y &&
+            game_state.world.block_edits[i].z == z
         ) {
             return i;
         }
@@ -71,7 +71,7 @@ static int get_block_type(int x, int y, int z) {
     const int edit_index = get_block_edit_index(x, y, z);
 
     if (edit_index >= 0) {
-        return block_edits[edit_index].type;
+        return game_state.world.block_edits[edit_index].type;
     }
 
     return get_generated_block_type(x, y, z);
@@ -79,14 +79,14 @@ static int get_block_type(int x, int y, int z) {
 
 
 static void remove_block_edit_at_index(int index) {
-    if (index < 0 || index >= block_edit_count) {
+    if (index < 0 || index >= game_state.world.block_edit_count) {
         return;
     }
 
-    block_edit_count--;
+    game_state.world.block_edit_count--;
 
-    if (index != block_edit_count) {
-        block_edits[index] = block_edits[block_edit_count];
+    if (index != game_state.world.block_edit_count) {
+        game_state.world.block_edits[index] = game_state.world.block_edits[game_state.world.block_edit_count];
     }
 }
 
@@ -104,27 +104,27 @@ static void set_block_type(int x, int y, int z, int type) {
             remove_block_edit_at_index(edit_index);
         }
 
-        mesh_dirty = 1;
+        game_state.world.mesh_dirty = 1;
         return;
     }
 
     if (edit_index >= 0) {
-        block_edits[edit_index].type = (uint8_t)type;
-        mesh_dirty = 1;
+        game_state.world.block_edits[edit_index].type = (uint8_t)type;
+        game_state.world.mesh_dirty = 1;
         return;
     }
 
-    if (block_edit_count >= MAX_BLOCK_EDITS) {
+    if (game_state.world.block_edit_count >= MAX_BLOCK_EDITS) {
         return;
     }
 
-    block_edits[block_edit_count].x = x;
-    block_edits[block_edit_count].y = y;
-    block_edits[block_edit_count].z = z;
-    block_edits[block_edit_count].type = (uint8_t)type;
-    block_edit_count++;
+    game_state.world.block_edits[game_state.world.block_edit_count].x = x;
+    game_state.world.block_edits[game_state.world.block_edit_count].y = y;
+    game_state.world.block_edits[game_state.world.block_edit_count].z = z;
+    game_state.world.block_edits[game_state.world.block_edit_count].type = (uint8_t)type;
+    game_state.world.block_edit_count++;
 
-    mesh_dirty = 1;
+    game_state.world.mesh_dirty = 1;
 }
 
 
@@ -143,7 +143,7 @@ static void clear_vertex_lookup(void) {
     for (int y = 0; y < GRID_Y_LINES; y++) {
         for (int z = 0; z < GRID_VERTICES_PER_SIDE; z++) {
             for (int x = 0; x < GRID_VERTICES_PER_SIDE; x++) {
-                vertex_lookup[y][z][x] = -1;
+                game_state.world.vertex_lookup[y][z][x] = -1;
             }
         }
     }
@@ -155,7 +155,7 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
     const int start_tile_z = center_tile_z - VIEW_RADIUS;
 
     /*
-     * local_blocks has a 1-block border around the visible 17x17 area.
+     * game_state.world.local_blocks has a 1-block border around the visible 17x17 area.
      * That lets us test neighbor blocks in O(1) without calling get_block_type()
      * thousands of times during mesh generation.
      */
@@ -165,7 +165,7 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
                 const int world_x = start_tile_x + x - 1;
                 const int world_z = start_tile_z + z - 1;
 
-                local_blocks[y][z][x] = (uint8_t)get_generated_block_type(
+                game_state.world.local_blocks[y][z][x] = (uint8_t)get_generated_block_type(
                     world_x,
                     y,
                     world_z
@@ -179,10 +179,10 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
      * Previous version scanned edits for every block lookup; this is what made
      * each placed block progressively slow the game down.
      */
-    for (int i = 0; i < block_edit_count; i++) {
-        const int local_x = block_edits[i].x - start_tile_x + 1;
-        const int local_z = block_edits[i].z - start_tile_z + 1;
-        const int y = block_edits[i].y;
+    for (int i = 0; i < game_state.world.block_edit_count; i++) {
+        const int local_x = game_state.world.block_edits[i].x - start_tile_x + 1;
+        const int local_z = game_state.world.block_edits[i].z - start_tile_z + 1;
+        const int y = game_state.world.block_edits[i].y;
 
         if (
             local_x < 0 ||
@@ -195,7 +195,7 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
             continue;
         }
 
-        local_blocks[y][local_z][local_x] = block_edits[i].type;
+        game_state.world.local_blocks[y][local_z][local_x] = game_state.world.block_edits[i].type;
     }
 }
 
@@ -203,7 +203,7 @@ static void build_local_block_cache(int center_tile_x, int center_tile_z) {
 static int get_local_block_type(int visible_x, int y, int visible_z) {
     /*
      * visible_x/visible_z are usually 0..16.
-     * -1 and VIEW_SIZE are allowed for neighbor checks because local_blocks
+     * -1 and VIEW_SIZE are allowed for neighbor checks because game_state.world.local_blocks
      * has a 1-block border.
      */
     const int local_x = visible_x + 1;
@@ -220,7 +220,7 @@ static int get_local_block_type(int visible_x, int y, int visible_z) {
         return BLOCK_AIR;
     }
 
-    return local_blocks[y][local_z][local_x];
+    return game_state.world.local_blocks[y][local_z][local_x];
 }
 
 
@@ -231,24 +231,24 @@ static int add_grid_vertex(
     int start_world_x,
     int start_world_z
 ) {
-    int *lookup_entry = &(vertex_lookup[y_line][local_z_line][local_x_line]);
+    int *lookup_entry = &(game_state.world.vertex_lookup[y_line][local_z_line][local_x_line]);
 
     if (*lookup_entry >= 0) {
         return *lookup_entry;
     }
 
-    if (mesh_vertex_count >= MAX_MESH_VERTICES) {
+    if (game_state.world.mesh_vertex_count >= MAX_MESH_VERTICES) {
         return 0;
     }
 
-    Vec3i *vertex = &(mesh_vertices[mesh_vertex_count]);
+    Vec3i *vertex = &(game_state.world.mesh_vertices[game_state.world.mesh_vertex_count]);
 
     vertex->x = start_world_x + (local_x_line * BLOCK_SIZE);
     vertex->y = block_y_to_world_min(y_line);
     vertex->z = start_world_z + (local_z_line * BLOCK_SIZE);
 
-    *lookup_entry = mesh_vertex_count;
-    mesh_vertex_count++;
+    *lookup_entry = game_state.world.mesh_vertex_count;
+    game_state.world.mesh_vertex_count++;
 
     return *lookup_entry;
 }
@@ -275,7 +275,7 @@ static void push_face_by_grid_vertices(
     uint8_t block_type,
     uint8_t face_type
 ) {
-    if (mesh_face_count >= MAX_MESH_FACES) {
+    if (game_state.world.mesh_face_count >= MAX_MESH_FACES) {
         return;
     }
 
@@ -296,7 +296,7 @@ static void push_face_by_grid_vertices(
         return;
     }
 
-    MeshFace *face = &(mesh_faces[mesh_face_count]);
+    MeshFace *face = &(game_state.world.mesh_faces[game_state.world.mesh_face_count]);
 
     face->v[0] = (uint16_t)add_grid_vertex(x0, y0, z0, start_world_x, start_world_z);
     face->v[1] = (uint16_t)add_grid_vertex(x1, y1, z1, start_world_x, start_world_z);
@@ -309,7 +309,7 @@ static void push_face_by_grid_vertices(
     face->block_type = block_type;
     face->face_type = face_type;
 
-    mesh_face_count++;
+    game_state.world.mesh_face_count++;
 }
 
 
@@ -590,8 +590,8 @@ static void build_world_mesh(int center_tile_x, int center_tile_z) {
     const int start_world_x = tile_to_world_center(start_tile_x) - BLOCK_HALF;
     const int start_world_z = tile_to_world_center(start_tile_z) - BLOCK_HALF;
 
-    mesh_vertex_count = 0;
-    mesh_face_count = 0;
+    game_state.world.mesh_vertex_count = 0;
+    game_state.world.mesh_face_count = 0;
 
     clear_vertex_lookup();
     build_local_block_cache(center_tile_x, center_tile_z);
@@ -684,9 +684,9 @@ static void build_world_mesh(int center_tile_x, int center_tile_z) {
         }
     }
 
-    mesh_center_tile_x = center_tile_x;
-    mesh_center_tile_z = center_tile_z;
-    mesh_dirty = 0;
+    game_state.world.mesh_center_tile_x = center_tile_x;
+    game_state.world.mesh_center_tile_z = center_tile_z;
+    game_state.world.mesh_dirty = 0;
 }
 
 
@@ -695,9 +695,9 @@ static void rebuild_mesh_if_needed(void) {
     const int center_tile_z = world_to_tile(game_state.player.camera_pos_z);
 
     if (
-        mesh_dirty ||
-        center_tile_x != mesh_center_tile_x ||
-        center_tile_z != mesh_center_tile_z
+        game_state.world.mesh_dirty ||
+        center_tile_x != game_state.world.mesh_center_tile_x ||
+        center_tile_z != game_state.world.mesh_center_tile_z
     ) {
         build_world_mesh(center_tile_x, center_tile_z);
     }
@@ -711,8 +711,8 @@ static void transform_all_vertices(void) {
     const int sin_x = isin(game_state.player.camera_pitch);
     const int cos_x = icos(game_state.player.camera_pitch);
 
-    for (int i = 0; i < mesh_vertex_count; i++) {
-        const Vec3i *world = &(mesh_vertices[i]);
+    for (int i = 0; i < game_state.world.mesh_vertex_count; i++) {
+        const Vec3i *world = &(game_state.world.mesh_vertices[i]);
 
         const int rel_x = world->x - game_state.player.camera_pos_x;
         const int rel_y = world->y - game_state.player.camera_pos_y;
@@ -724,9 +724,9 @@ static void transform_all_vertices(void) {
         const int y2 = ((rel_y * cos_x) - (z1 * sin_x)) / FIXED_ONE;
         const int z2 = ((rel_y * sin_x) + (z1 * cos_x)) / FIXED_ONE;
 
-        camera_vertices[i].x = x1;
-        camera_vertices[i].y = y2;
-        camera_vertices[i].z = z2;
+        game_state.world.camera_vertices[i].x = x1;
+        game_state.world.camera_vertices[i].y = y2;
+        game_state.world.camera_vertices[i].z = z2;
     }
 }
 
@@ -955,10 +955,10 @@ static void draw_camera_triangle_clipped(
 
 static int face_center_z(const MeshFace *face) {
     return (
-        camera_vertices[face->v[0]].z +
-        camera_vertices[face->v[1]].z +
-        camera_vertices[face->v[2]].z +
-        camera_vertices[face->v[3]].z
+        game_state.world.camera_vertices[face->v[0]].z +
+        game_state.world.camera_vertices[face->v[1]].z +
+        game_state.world.camera_vertices[face->v[2]].z +
+        game_state.world.camera_vertices[face->v[3]].z
     ) / 4;
 }
 
@@ -973,7 +973,7 @@ static int face_is_outside_frustum(const MeshFace *face) {
     int outside_bottom = 1;
 
     for (int i = 0; i < 4; i++) {
-        const Vec3i *v = &(camera_vertices[face->v[i]]);
+        const Vec3i *v = &(game_state.world.camera_vertices[face->v[i]]);
         int z = v->z;
 
         if (z >= NEAR_PLANE_Z) {
@@ -1156,8 +1156,8 @@ static void draw_camera_textured_log_quad(
 
 
 static void draw_mesh(RenderContext *context) {
-    for (int i = 0; i < mesh_face_count; i++) {
-        const MeshFace *face = &(mesh_faces[i]);
+    for (int i = 0; i < game_state.world.mesh_face_count; i++) {
+        const MeshFace *face = &(game_state.world.mesh_faces[i]);
 
         if (face_center_z(face) <= NEAR_PLANE_Z) {
             continue;
@@ -1167,10 +1167,10 @@ static void draw_mesh(RenderContext *context) {
             continue;
         }
 
-        const Vec3i *v0 = &(camera_vertices[face->v[0]]);
-        const Vec3i *v1 = &(camera_vertices[face->v[1]]);
-        const Vec3i *v2 = &(camera_vertices[face->v[2]]);
-        const Vec3i *v3 = &(camera_vertices[face->v[3]]);
+        const Vec3i *v0 = &(game_state.world.camera_vertices[face->v[0]]);
+        const Vec3i *v1 = &(game_state.world.camera_vertices[face->v[1]]);
+        const Vec3i *v2 = &(game_state.world.camera_vertices[face->v[2]]);
+        const Vec3i *v3 = &(game_state.world.camera_vertices[face->v[3]]);
 
         if (
             face->block_type == BLOCK_LOG &&

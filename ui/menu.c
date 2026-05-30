@@ -153,7 +153,7 @@ static void draw_pause_option(
 
 static void update_menu_input(void) {
     const uint16_t buttons = read_pad_buttons();
-    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+    const uint16_t pressed_this_frame = buttons & ~game_state.input.pad_previous_buttons;
 
     if (pressed_this_frame & PAD_UP) {
         game_state.app.menu_selected_option--;
@@ -191,17 +191,17 @@ static void update_menu_input(void) {
         }
     }
 
-    pad_previous_buttons = buttons;
+    game_state.input.pad_previous_buttons = buttons;
 }
 
 
 static void update_pause_input(void) {
     const uint16_t buttons = read_pad_buttons();
-    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+    const uint16_t pressed_this_frame = buttons & ~game_state.input.pad_previous_buttons;
 
     if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
         game_state.app.app_state = APP_STATE_PLAY;
-        pad_previous_buttons = buttons;
+        game_state.input.pad_previous_buttons = buttons;
         return;
     }
 
@@ -308,7 +308,7 @@ static void update_pause_input(void) {
         }
     }
 
-    pad_previous_buttons = buttons;
+    game_state.input.pad_previous_buttons = buttons;
 }
 
 

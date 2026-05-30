@@ -317,9 +317,9 @@ static void reset_camera(void) {
 
     snap_camera_to_ground();
 
-    mesh_center_tile_x = 999999;
-    mesh_center_tile_z = 999999;
-    mesh_dirty = 1;
+    game_state.world.mesh_center_tile_x = 999999;
+    game_state.world.mesh_center_tile_z = 999999;
+    game_state.world.mesh_dirty = 1;
 }
 
 
@@ -558,7 +558,7 @@ static void add_target_block(void) {
 
 static void update_input(void) {
     const uint16_t buttons = read_pad_buttons();
-    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+    const uint16_t pressed_this_frame = buttons & ~game_state.input.pad_previous_buttons;
 
     const int forward_x = isin(game_state.player.camera_yaw);
     const int forward_z = icos(game_state.player.camera_yaw);
@@ -570,7 +570,7 @@ static void update_input(void) {
         reset_block_breaking();
         game_state.app.app_state = APP_STATE_PAUSE;
         game_state.app.pause_selected_option = PAUSE_OPTION_RESUME;
-        pad_previous_buttons = buttons;
+        game_state.input.pad_previous_buttons = buttons;
         return;
     }
 
@@ -601,7 +601,7 @@ static void update_input(void) {
             game_state.app.app_state = APP_STATE_WORKBENCH;
             game_state.inventory.workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
             set_system_status("WORKBENCH", 45);
-            pad_previous_buttons = buttons;
+            game_state.input.pad_previous_buttons = buttons;
             return;
         }
     }
@@ -698,5 +698,5 @@ static void update_input(void) {
         snap_camera_to_ground();
     }
 
-    pad_previous_buttons = buttons;
+    game_state.input.pad_previous_buttons = buttons;
 }
