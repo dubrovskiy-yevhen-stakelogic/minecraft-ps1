@@ -1006,9 +1006,17 @@ static int face_is_safe_for_textured_quad(
     );
 }
 
-static int log_face_texture_u(int face_type) {
-    if (face_type == FACE_POS_Y || face_type == FACE_NEG_Y) {
-        return LOG_TOP_U;
+static int block_face_texture_u(int block_type, int face_type) {
+    if (block_type == BLOCK_LOG) {
+        if (face_type == FACE_POS_Y || face_type == FACE_NEG_Y) {
+            return LOG_TOP_U;
+        }
+
+        return LOG_SIDE_U;
+    }
+
+    if (block_type == BLOCK_PLANKS) {
+        return PLANKS_U;
     }
 
     return LOG_SIDE_U;
@@ -1050,12 +1058,13 @@ static void draw_projected_textured_triangle(
     setClut(poly, 0, 0);
 }
 
-static void draw_camera_textured_log_quad(
+static void draw_camera_textured_block_quad(
     RenderContext *context,
     const Vec3i *v0,
     const Vec3i *v1,
     const Vec3i *v2,
     const Vec3i *v3,
+    int block_type,
     int face_type
 ) {
     ProjectedVertex p0;
@@ -1063,7 +1072,7 @@ static void draw_camera_textured_log_quad(
     ProjectedVertex p2;
     ProjectedVertex p3;
 
-    const int tex_u0 = log_face_texture_u(face_type);
+    const int tex_u0 = block_face_texture_u(block_type, face_type);
     const int tex_v0 = LOG_TILE_V;
     const int tex_u1 = tex_u0 + LOG_TILE_SIZE - 1;
     const int tex_v1 = tex_v0 + LOG_TILE_SIZE - 1;
@@ -1137,15 +1146,16 @@ static void draw_mesh(RenderContext *context) {
         const Vec3i *v3 = &(game_state.world.camera_vertices[face->v[3]]);
 
         if (
-            face->block_type == BLOCK_LOG &&
+            (face->block_type == BLOCK_LOG || face->block_type == BLOCK_PLANKS) &&
             face_is_safe_for_textured_quad(v0, v1, v2, v3)
         ) {
-            draw_camera_textured_log_quad(
+            draw_camera_textured_block_quad(
                 context,
                 v0,
                 v1,
                 v2,
                 v3,
+                face->block_type,
                 face->face_type
             );
         } else {
