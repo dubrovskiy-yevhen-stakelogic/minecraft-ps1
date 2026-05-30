@@ -92,6 +92,9 @@
 #define INVENTORY_HOTBAR_Y 158
 #define INVENTORY_CURSOR_STORAGE_START 0
 #define INVENTORY_CURSOR_HOTBAR_START INVENTORY_STORAGE_SLOT_COUNT
+#define CRAFT_SLOT_COUNT 4
+#define INVENTORY_CURSOR_CRAFT_START (INVENTORY_STORAGE_SLOT_COUNT + HOTBAR_SLOT_COUNT)
+#define INVENTORY_CURSOR_CRAFT_OUTPUT (INVENTORY_CURSOR_CRAFT_START + CRAFT_SLOT_COUNT)
 #define STACK_MAX_COUNT 64
 
 #define BLOCK_BREAK_MIN_FRAMES 45
@@ -227,7 +230,9 @@ enum {
     BLOCK_DIRT = 1,
     BLOCK_GRASS = 2,
     BLOCK_STONE = 3,
-    BLOCK_SAND = 4
+    BLOCK_SAND = 4,
+    BLOCK_LOG = 5,
+    BLOCK_PLANKS = 6
 };
 
 enum {
@@ -302,6 +307,13 @@ static ItemStack hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
     { BLOCK_AIR, 0 }
 };
 
+static ItemStack crafting_slots[CRAFT_SLOT_COUNT] = {
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 }
+};
+
 static ItemStack inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
     { BLOCK_AIR, 0 },
     { BLOCK_AIR, 0 },
@@ -366,6 +378,7 @@ static void spawn_dropped_item(
     int block_y,
     int block_z
 );
+static void take_crafting_output(void);
 
 /*
  * 64-step sine table.
@@ -1057,7 +1070,9 @@ static void apply_save_data(const SaveData *save) {
                 block_edits[i].type != BLOCK_DIRT &&
                 block_edits[i].type != BLOCK_GRASS &&
                 block_edits[i].type != BLOCK_STONE &&
-                block_edits[i].type != BLOCK_SAND
+                block_edits[i].type != BLOCK_SAND &&
+                block_edits[i].type != BLOCK_LOG &&
+                block_edits[i].type != BLOCK_PLANKS
             ) {
                 block_edits[i].type = BLOCK_DIRT;
             }
@@ -1536,6 +1551,14 @@ static int get_block_hardness_frames(int block_type) {
         return BLOCK_BREAK_GRASS_FRAMES;
     }
 
+    if (block_type == BLOCK_LOG) {
+        return BLOCK_BREAK_STONE_FRAMES;
+    }
+
+    if (block_type == BLOCK_PLANKS) {
+        return BLOCK_BREAK_GRASS_FRAMES;
+    }
+
     if (block_type == BLOCK_DIRT) {
         return BLOCK_BREAK_DIRT_FRAMES;
     }
@@ -1731,7 +1754,7 @@ static int stack_is_empty(const ItemStack *stack) {
     return stack->type == BLOCK_AIR || stack->count == 0;
 }
 
-static int add_to_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
+static int add_to_existing_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
     int remaining = amount;
 
     if (type == BLOCK_AIR || amount <= 0) {
@@ -1748,6 +1771,16 @@ static int add_to_stack_array(ItemStack *stacks, int count, uint8_t type, int am
         }
     }
 
+    return remaining;
+}
+
+static int add_to_empty_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
+    int remaining = amount;
+
+    if (type == BLOCK_AIR || amount <= 0) {
+        return 0;
+    }
+
     for (int i = 0; i < count && remaining > 0; i++) {
         if (stack_is_empty(&(stacks[i]))) {
             const int add_count = remaining < STACK_MAX_COUNT ? remaining : STACK_MAX_COUNT;
@@ -1761,15 +1794,65 @@ static int add_to_stack_array(ItemStack *stacks, int count, uint8_t type, int am
     return remaining;
 }
 
+static int get_inventory_accept_capacity(uint8_t type) {
+    int capacity = 0;
+
+    if (type == BLOCK_AIR) {
+        return 0;
+    }
+
+    for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+        if (hotbar_slot_blocks[i].type == type) {
+            capacity += STACK_MAX_COUNT - hotbar_slot_blocks[i].count;
+        } else if (stack_is_empty(&(hotbar_slot_blocks[i]))) {
+            capacity += STACK_MAX_COUNT;
+        }
+    }
+
+    for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
+        if (inventory_storage_blocks[i].type == type) {
+            capacity += STACK_MAX_COUNT - inventory_storage_blocks[i].count;
+        } else if (stack_is_empty(&(inventory_storage_blocks[i]))) {
+            capacity += STACK_MAX_COUNT;
+        }
+    }
+
+    return capacity;
+}
+
 static int add_items_to_inventory(uint8_t type, int amount) {
-    int remaining = add_to_stack_array(
+    int remaining;
+
+    if (type == BLOCK_AIR || amount <= 0) {
+        return 0;
+    }
+
+    /*
+     * Minecraft-like quick transfer behavior:
+     * first merge into existing stacks anywhere, then create new stacks.
+     */
+    remaining = add_to_existing_stack_array(
         hotbar_slot_blocks,
         HOTBAR_SLOT_COUNT,
         type,
         amount
     );
 
-    remaining = add_to_stack_array(
+    remaining = add_to_existing_stack_array(
+        inventory_storage_blocks,
+        INVENTORY_STORAGE_SLOT_COUNT,
+        type,
+        remaining
+    );
+
+    remaining = add_to_empty_stack_array(
+        hotbar_slot_blocks,
+        HOTBAR_SLOT_COUNT,
+        type,
+        remaining
+    );
+
+    remaining = add_to_empty_stack_array(
         inventory_storage_blocks,
         INVENTORY_STORAGE_SLOT_COUNT,
         type,
@@ -2236,6 +2319,41 @@ static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uin
         *r = 184;
         *g = 166;
         *b = 92;
+        return;
+    }
+
+    if (block_type == BLOCK_LOG) {
+        if (face == FACE_POS_Y || face == FACE_NEG_Y) {
+            *r = 148;
+            *g = 104;
+            *b = 58;
+            return;
+        }
+
+        *r = 100;
+        *g = 68;
+        *b = 36;
+        return;
+    }
+
+    if (block_type == BLOCK_PLANKS) {
+        if (face == FACE_POS_Y) {
+            *r = 184;
+            *g = 132;
+            *b = 70;
+            return;
+        }
+
+        if (face == FACE_NEG_Y) {
+            *r = 92;
+            *g = 58;
+            *b = 30;
+            return;
+        }
+
+        *r = 148;
+        *g = 96;
+        *b = 48;
         return;
     }
 
@@ -2871,10 +2989,18 @@ static void draw_minecraft_texture_block(
             break;
 
         case 6:
-        default:
             draw_filled_rect(context, x, y, size, size, z + 1, 202, 184, 106);
             draw_texture_speckles(context, x, y, size, size, z, seed, 164, 142, 78);
             draw_texture_speckles(context, x, y, size, size, z, seed + 4, 232, 216, 136);
+            break;
+
+        case 7:
+        default:
+            draw_filled_rect(context, x, y, size, size, z + 1, 166, 108, 52);
+            draw_filled_rect(context, x, y + (size / 3), size, 1, z, 104, 64, 32);
+            draw_filled_rect(context, x, y + ((size * 2) / 3), size, 1, z, 104, 64, 32);
+            draw_filled_rect(context, x + (size / 2), y, 1, size, z, 196, 142, 76);
+            draw_texture_speckles(context, x, y, size, size, z, seed, 118, 76, 38);
             break;
     }
 
@@ -2943,6 +3069,14 @@ static int dropped_item_texture_type(uint8_t block_type) {
         return 6;
     }
 
+    if (block_type == BLOCK_LOG) {
+        return 4;
+    }
+
+    if (block_type == BLOCK_PLANKS) {
+        return 7;
+    }
+
     if (block_type == BLOCK_GRASS) {
         return 0;
     }
@@ -2985,6 +3119,12 @@ static void draw_dropped_item_icon(
         draw_filled_rect(context, x + 2, y + size - 5, size - 4, 2, ot_z, 74, 44, 24);
     } else if (block_type == BLOCK_GRASS) {
         draw_filled_rect(context, x + 2, y + 2, size - 4, 2, ot_z, 96, 214, 72);
+    } else if (block_type == BLOCK_LOG) {
+        draw_filled_rect(context, x + 2, y + 1, 3, size - 2, ot_z, 70, 44, 24);
+        draw_filled_rect(context, x + size - 4, y + 1, 2, size - 2, ot_z, 130, 88, 48);
+    } else if (block_type == BLOCK_PLANKS) {
+        draw_line(context, x + 1, y + (size / 3), x + size - 2, y + (size / 3), ot_z, 96, 58, 30);
+        draw_line(context, x + 1, y + ((size * 2) / 3), x + size - 2, y + ((size * 2) / 3), ot_z, 96, 58, 30);
     }
 }
 
@@ -3184,6 +3324,14 @@ static int block_type_to_icon_texture(int block_type) {
         return 6;
     }
 
+    if (block_type == BLOCK_LOG) {
+        return 4;
+    }
+
+    if (block_type == BLOCK_PLANKS) {
+        return 7;
+    }
+
     if (block_type == BLOCK_GRASS) {
         return 0;
     }
@@ -3293,64 +3441,211 @@ static ItemStack *get_inventory_cursor_stack_ptr(void) {
         return &(inventory_storage_blocks[inventory_cursor_slot]);
     }
 
-    return &(hotbar_slot_blocks[inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT]);
+    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
+        return &(hotbar_slot_blocks[inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT]);
+    }
+
+    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        return &(crafting_slots[inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START]);
+    }
+
+    return &(crafting_slots[0]);
 }
 
 static void move_inventory_cursor(int dx, int dy) {
-    int row;
-    int col;
-
     if (inventory_cursor_slot < INVENTORY_STORAGE_SLOT_COUNT) {
-        row = inventory_cursor_slot / INVENTORY_STORAGE_COLS;
-        col = inventory_cursor_slot % INVENTORY_STORAGE_COLS;
-    } else {
-        row = INVENTORY_STORAGE_ROWS;
-        col = inventory_cursor_slot - INVENTORY_STORAGE_SLOT_COUNT;
+        int row = inventory_cursor_slot / INVENTORY_STORAGE_COLS;
+        int col = inventory_cursor_slot % INVENTORY_STORAGE_COLS;
+
+        if (dy < 0 && row == 0) {
+            if (col >= 6 && col <= 7) {
+                inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (1 * 2) + (col - 6);
+                return;
+            }
+
+            if (col >= 8) {
+                inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
+                return;
+            }
+        }
+
+        col += dx;
+        row += dy;
+
+        if (col < 0) {
+            col = INVENTORY_STORAGE_COLS - 1;
+        }
+
+        if (col >= INVENTORY_STORAGE_COLS) {
+            col = 0;
+        }
+
+        if (row < 0) {
+            row = INVENTORY_STORAGE_ROWS;
+        }
+
+        if (row > INVENTORY_STORAGE_ROWS) {
+            row = 0;
+        }
+
+        if (row < INVENTORY_STORAGE_ROWS) {
+            inventory_cursor_slot = (row * INVENTORY_STORAGE_COLS) + col;
+        } else {
+            inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
+        }
+
+        return;
     }
 
-    col += dx;
-    row += dy;
+    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_START) {
+        int col = inventory_cursor_slot - INVENTORY_CURSOR_HOTBAR_START;
 
-    if (col < 0) {
-        col = INVENTORY_STORAGE_COLS - 1;
+        col += dx;
+
+        if (col < 0) {
+            col = INVENTORY_STORAGE_COLS - 1;
+        }
+
+        if (col >= INVENTORY_STORAGE_COLS) {
+            col = 0;
+        }
+
+        if (dy < 0) {
+            inventory_cursor_slot = ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
+        } else if (dy > 0) {
+            inventory_cursor_slot = col;
+        } else {
+            inventory_cursor_slot = INVENTORY_CURSOR_HOTBAR_START + col;
+        }
+
+        return;
     }
 
-    if (col >= INVENTORY_STORAGE_COLS) {
-        col = 0;
+    if (inventory_cursor_slot < INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        int local = inventory_cursor_slot - INVENTORY_CURSOR_CRAFT_START;
+        int row = local / 2;
+        int col = local % 2;
+
+        if (dx > 0 && col == 1) {
+            inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_OUTPUT;
+            return;
+        }
+
+        if (dy > 0 && row == 1) {
+            inventory_cursor_slot = col + 6;
+            return;
+        }
+
+        col += dx;
+        row += dy;
+
+        if (col < 0) {
+            col = 1;
+        }
+
+        if (col > 1) {
+            col = 0;
+        }
+
+        if (row < 0) {
+            row = 1;
+        }
+
+        if (row > 1) {
+            row = 0;
+        }
+
+        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + (row * 2) + col;
+        return;
     }
 
-    if (row < 0) {
-        row = INVENTORY_STORAGE_ROWS;
+    /*
+     * Crafting output slot.
+     */
+    if (dx < 0) {
+        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 3;
+        return;
     }
 
-    if (row > INVENTORY_STORAGE_ROWS) {
-        row = 0;
+    if (dy > 0) {
+        inventory_cursor_slot = 8;
+        return;
     }
 
-    if (row < INVENTORY_STORAGE_ROWS) {
-        inventory_cursor_slot = (row * INVENTORY_STORAGE_COLS) + col;
-    } else {
-        inventory_cursor_slot = INVENTORY_STORAGE_SLOT_COUNT + col;
+    if (dy < 0) {
+        inventory_cursor_slot = INVENTORY_CURSOR_CRAFT_START + 1;
+        return;
+    }
+}
+
+static void merge_or_swap_inventory_held_with_slot(ItemStack *slot) {
+    if (stack_is_empty(&inventory_held_stack)) {
+        inventory_held_stack = *slot;
+        slot->type = BLOCK_AIR;
+        slot->count = 0;
+
+        normalize_stack(&inventory_held_stack);
+        normalize_stack(slot);
+        set_system_status(stack_is_empty(&inventory_held_stack) ? "HAND EMPTY" : "ITEM HELD", 45);
+        return;
+    }
+
+    if (stack_is_empty(slot)) {
+        *slot = inventory_held_stack;
+        inventory_held_stack.type = BLOCK_AIR;
+        inventory_held_stack.count = 0;
+
+        normalize_stack(slot);
+        normalize_stack(&inventory_held_stack);
+        set_system_status("ITEM PLACED", 45);
+        return;
+    }
+
+    if (slot->type == inventory_held_stack.type && slot->count < STACK_MAX_COUNT) {
+        const int space = STACK_MAX_COUNT - slot->count;
+        const int move_count = inventory_held_stack.count < space ? inventory_held_stack.count : space;
+
+        slot->count = (uint8_t)(slot->count + move_count);
+        inventory_held_stack.count = (uint8_t)(inventory_held_stack.count - move_count);
+
+        normalize_stack(slot);
+        normalize_stack(&inventory_held_stack);
+        set_system_status(stack_is_empty(&inventory_held_stack) ? "STACK MERGED" : "STACK PARTIAL", 45);
+        return;
+    }
+
+    {
+        const ItemStack previous = *slot;
+
+        *slot = inventory_held_stack;
+        inventory_held_stack = previous;
+
+        normalize_stack(slot);
+        normalize_stack(&inventory_held_stack);
+        set_system_status("ITEM SWAPPED", 45);
     }
 }
 
 static void swap_inventory_held_with_cursor(void) {
-    ItemStack *slot = get_inventory_cursor_stack_ptr();
-    const ItemStack previous = *slot;
+    ItemStack *slot;
 
-    *slot = inventory_held_stack;
-    inventory_held_stack = previous;
+    if (inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        take_crafting_output();
+        return;
+    }
 
-    normalize_stack(slot);
-    normalize_stack(&inventory_held_stack);
-
-    set_system_status(stack_is_empty(&inventory_held_stack) ? "HAND EMPTY" : "ITEM HELD", 45);
+    slot = get_inventory_cursor_stack_ptr();
+    merge_or_swap_inventory_held_with_slot(slot);
 }
 
 static void quick_move_inventory_slot_to_hotbar(void) {
     ItemStack *slot = get_inventory_cursor_stack_ptr();
     ItemStack *target = &(hotbar_slot_blocks[selected_hotbar_slot]);
     const ItemStack previous = *target;
+
+    if (inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT) {
+        return;
+    }
 
     *target = *slot;
     *slot = previous;
@@ -3359,6 +3654,134 @@ static void quick_move_inventory_slot_to_hotbar(void) {
     normalize_stack(target);
 
     set_system_status("MOVED TO HOTBAR", 55);
+}
+
+static ItemStack get_crafting_output_stack(void) {
+    ItemStack result;
+    int log_slot = -1;
+
+    result.type = BLOCK_AIR;
+    result.count = 0;
+
+    for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
+        if (stack_is_empty(&(crafting_slots[i]))) {
+            continue;
+        }
+
+        /*
+         * Minecraft-like recipe:
+         * one stack of logs in any crafting slot produces 4 planks.
+         * The stack may contain any count; taking the output consumes only 1 log.
+         */
+        if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count >= 1 && log_slot < 0) {
+            log_slot = i;
+            continue;
+        }
+
+        return result;
+    }
+
+    if (log_slot >= 0) {
+        result.type = BLOCK_PLANKS;
+        result.count = 4;
+    }
+
+    return result;
+}
+
+static int can_add_stack_to_hand(const ItemStack *stack) {
+    if (stack_is_empty(stack)) {
+        return 0;
+    }
+
+    if (stack_is_empty(&inventory_held_stack)) {
+        return 1;
+    }
+
+    if (inventory_held_stack.type != stack->type) {
+        return 0;
+    }
+
+    return (inventory_held_stack.count + stack->count) <= STACK_MAX_COUNT;
+}
+
+static void add_stack_to_hand(const ItemStack *stack) {
+    if (stack_is_empty(&inventory_held_stack)) {
+        inventory_held_stack = *stack;
+        normalize_stack(&inventory_held_stack);
+        return;
+    }
+
+    if (inventory_held_stack.type == stack->type) {
+        inventory_held_stack.count = (uint8_t)(inventory_held_stack.count + stack->count);
+        normalize_stack(&inventory_held_stack);
+    }
+}
+
+static void consume_one_crafting_input_log(void) {
+    for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
+        if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count > 0) {
+            crafting_slots[i].count--;
+            normalize_stack(&(crafting_slots[i]));
+            return;
+        }
+    }
+}
+
+static void take_crafting_output(void) {
+    const ItemStack output = get_crafting_output_stack();
+
+    if (stack_is_empty(&output)) {
+        set_system_status("NO RECIPE", 45);
+        return;
+    }
+
+    if (!can_add_stack_to_hand(&output)) {
+        set_system_status("HAND FULL", 45);
+        return;
+    }
+
+    add_stack_to_hand(&output);
+    consume_one_crafting_input_log();
+    set_system_status("CRAFTED PLANKS", 55);
+}
+
+static int quick_craft_output_to_inventory(void) {
+    int crafted_count = 0;
+    int guard = 0;
+
+    for (;;) {
+        const ItemStack output = get_crafting_output_stack();
+
+        if (stack_is_empty(&output)) {
+            break;
+        }
+
+        if (get_inventory_accept_capacity(output.type) < output.count) {
+            break;
+        }
+
+        if (add_items_to_inventory(output.type, output.count) != 0) {
+            break;
+        }
+
+        consume_one_crafting_input_log();
+        crafted_count += output.count;
+
+        guard++;
+
+        if (guard > STACK_MAX_COUNT) {
+            break;
+        }
+    }
+
+    if (crafted_count > 0) {
+        set_system_status("SHIFT CRAFTED", 70);
+        return 1;
+    }
+
+    set_system_status("NO SPACE", 55);
+    return 0;
 }
 
 static void draw_inventory_slot(
@@ -3443,15 +3866,62 @@ static void draw_inventory_grid(RenderContext *context) {
 }
 
 static void draw_inventory_crafting_area(RenderContext *context) {
+    const ItemStack output = get_crafting_output_stack();
+
     draw_text(context, 190, 34, 0, "CRAFTING");
 
-    draw_inventory_slot(context, 190, 48, BLOCK_AIR, 0, 0, 1, 600);
-    draw_inventory_slot(context, 210, 48, BLOCK_AIR, 0, 0, 1, 601);
-    draw_inventory_slot(context, 190, 68, BLOCK_AIR, 0, 0, 1, 602);
-    draw_inventory_slot(context, 210, 68, BLOCK_AIR, 0, 0, 1, 603);
+    draw_inventory_slot(
+        context,
+        190,
+        48,
+        crafting_slots[0].type,
+        crafting_slots[0].count,
+        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START,
+        0,
+        600
+    );
+    draw_inventory_slot(
+        context,
+        210,
+        48,
+        crafting_slots[1].type,
+        crafting_slots[1].count,
+        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 1,
+        0,
+        601
+    );
+    draw_inventory_slot(
+        context,
+        190,
+        68,
+        crafting_slots[2].type,
+        crafting_slots[2].count,
+        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 2,
+        0,
+        602
+    );
+    draw_inventory_slot(
+        context,
+        210,
+        68,
+        crafting_slots[3].type,
+        crafting_slots[3].count,
+        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_START + 3,
+        0,
+        603
+    );
 
     draw_text(context, 234, 59, 0, ">");
-    draw_inventory_slot(context, 250, 58, BLOCK_AIR, 0, 0, 1, 604);
+    draw_inventory_slot(
+        context,
+        250,
+        58,
+        output.type,
+        output.count,
+        inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT,
+        stack_is_empty(&output),
+        604
+    );
 }
 
 static void draw_inventory_armor_area(RenderContext *context) {
@@ -3483,8 +3953,8 @@ static void draw_inventory_screen(RenderContext *context) {
     draw_text(context, 70, 82, 0, "STORAGE");
     draw_inventory_grid(context);
 
-    draw_text(context, 70, 182, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP");
-    draw_text(context, 70, 196, 0, "SQUARE TO SELECTED HOTBAR  START BACK");
+    draw_text(context, 70, 182, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP/CRAFT");
+    draw_text(context, 70, 196, 0, "R2+X SHIFT-CRAFT  START BACK");
 
     if (!stack_is_empty(&inventory_held_stack)) {
         const int texture_type = block_type_to_icon_texture(inventory_held_stack.type);
@@ -3542,6 +4012,14 @@ static void reset_inventory_items(void) {
     for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
         inventory_storage_blocks[i].type = BLOCK_AIR;
         inventory_storage_blocks[i].count = 0;
+    }
+
+    inventory_storage_blocks[0].type = BLOCK_LOG;
+    inventory_storage_blocks[0].count = 16;
+
+    for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
+        crafting_slots[i].type = BLOCK_AIR;
+        crafting_slots[i].count = 0;
     }
 
     inventory_held_stack.type = BLOCK_AIR;
@@ -3764,7 +4242,11 @@ static void update_inventory_input(void) {
         (pressed_this_frame & PAD_CROSS) ||
         (pressed_this_frame & PAD_CIRCLE)
     ) {
-        swap_inventory_held_with_cursor();
+        if ((buttons & PAD_R2) && inventory_cursor_slot == INVENTORY_CURSOR_CRAFT_OUTPUT) {
+            quick_craft_output_to_inventory();
+        } else {
+            swap_inventory_held_with_cursor();
+        }
     }
 
     if (pressed_this_frame & PAD_SQUARE) {
