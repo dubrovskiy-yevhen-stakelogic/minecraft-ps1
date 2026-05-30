@@ -340,7 +340,7 @@ static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uin
         return;
     }
 
-    if (block_type == BLOCK_STONE) {
+    if (block_type == BLOCK_COBBLESTONE) {
         if (face == FACE_POS_Y) {
             *r = 128;
             *g = 130;
@@ -1019,6 +1019,30 @@ static int block_face_texture_u(int block_type, int face_type) {
         return PLANKS_U;
     }
 
+    if (block_type == BLOCK_DIRT) {
+        return DIRT_U;
+    }
+
+    if (block_type == BLOCK_COBBLESTONE) {
+        return COBBLESTONE_U;
+    }
+
+    if (block_type == BLOCK_SAND) {
+        return SAND_U;
+    }
+
+    if (block_type == BLOCK_GRASS) {
+        if (face_type == FACE_POS_Y) {
+            return GRASS_TOP_U;
+        }
+
+        if (face_type == FACE_NEG_Y) {
+            return DIRT_U;
+        }
+
+        return GRASS_SIDE_U;
+    }
+
     return LOG_SIDE_U;
 }
 
@@ -1077,6 +1101,15 @@ static void draw_camera_textured_block_quad(
     const int tex_u1 = tex_u0 + LOG_TILE_SIZE - 1;
     const int tex_v1 = tex_v0 + LOG_TILE_SIZE - 1;
 
+    int uv0_u = tex_u0;
+    int uv0_v = tex_v0;
+    int uv1_u = tex_u1;
+    int uv1_v = tex_v0;
+    int uv2_u = tex_u1;
+    int uv2_v = tex_v1;
+    int uv3_u = tex_u0;
+    int uv3_v = tex_v1;
+
     int depth_a;
     int depth_b;
     int ot_a;
@@ -1090,6 +1123,31 @@ static void draw_camera_textured_block_quad(
     project_camera_vertex(v1, &p1);
     project_camera_vertex(v2, &p2);
     project_camera_vertex(v3, &p3);
+
+    /*
+     * Vertical side faces are authored with vertices starting at bottom-left,
+     * while our default UV layout assumes v0 is top-left. That is why the
+     * grass-side fringe showed up on the left edge instead of the top edge.
+     *
+     * Rotate the UV layout for vertical side faces so texture top always maps
+     * to world +Y. This fixes grass blocks and also makes other side textures
+     * orient more naturally.
+     */
+    if (
+        face_type == FACE_NEG_Z ||
+        face_type == FACE_POS_Z ||
+        face_type == FACE_NEG_X ||
+        face_type == FACE_POS_X
+    ) {
+        uv0_u = tex_u0;
+        uv0_v = tex_v1;
+        uv1_u = tex_u0;
+        uv1_v = tex_v0;
+        uv2_u = tex_u1;
+        uv2_v = tex_v0;
+        uv3_u = tex_u1;
+        uv3_v = tex_v1;
+    }
 
     /*
      * Do not render the whole face as one large textured quad primitive.
@@ -1110,9 +1168,9 @@ static void draw_camera_textured_block_quad(
         &p0,
         &p1,
         &p2,
-        tex_u0, tex_v0,
-        tex_u1, tex_v0,
-        tex_u1, tex_v1,
+        uv0_u, uv0_v,
+        uv1_u, uv1_v,
+        uv2_u, uv2_v,
         ot_a
     );
 
@@ -1121,9 +1179,9 @@ static void draw_camera_textured_block_quad(
         &p0,
         &p2,
         &p3,
-        tex_u0, tex_v0,
-        tex_u1, tex_v1,
-        tex_u0, tex_v1,
+        uv0_u, uv0_v,
+        uv2_u, uv2_v,
+        uv3_u, uv3_v,
         ot_b
     );
 }
@@ -1146,7 +1204,7 @@ static void draw_mesh(RenderContext *context) {
         const Vec3i *v3 = &(game_state.world.camera_vertices[face->v[3]]);
 
         if (
-            (face->block_type == BLOCK_LOG || face->block_type == BLOCK_PLANKS) &&
+            (face->block_type == BLOCK_LOG || face->block_type == BLOCK_PLANKS || face->block_type == BLOCK_DIRT || face->block_type == BLOCK_GRASS || face->block_type == BLOCK_COBBLESTONE || face->block_type == BLOCK_SAND) &&
             face_is_safe_for_textured_quad(v0, v1, v2, v3)
         ) {
             draw_camera_textured_block_quad(

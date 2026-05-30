@@ -376,8 +376,8 @@ static int get_block_hardness_frames(int block_type) {
         return BLOCK_BREAK_SAND_FRAMES;
     }
 
-    if (block_type == BLOCK_STONE) {
-        return BLOCK_BREAK_STONE_FRAMES;
+    if (block_type == BLOCK_COBBLESTONE) {
+        return BLOCK_BREAK_COBBLESTONE_FRAMES;
     }
 
     if (block_type == BLOCK_GRASS) {
@@ -385,7 +385,7 @@ static int get_block_hardness_frames(int block_type) {
     }
 
     if (block_type == BLOCK_LOG) {
-        return BLOCK_BREAK_STONE_FRAMES;
+        return BLOCK_BREAK_COBBLESTONE_FRAMES;
     }
 
     if (block_type == BLOCK_PLANKS) {

@@ -132,7 +132,7 @@ static int dropped_item_texture_type(uint8_t block_type) {
         return 1;
     }
 
-    if (block_type == BLOCK_STONE) {
+    if (block_type == BLOCK_COBBLESTONE) {
         return 2;
     }
 
@@ -184,7 +184,7 @@ static void draw_dropped_item_icon(
     /*
      * Extra tiny type markers make 8-12px drops more recognizable on PS1.
      */
-    if (block_type == BLOCK_STONE) {
+    if (block_type == BLOCK_COBBLESTONE) {
         draw_line(context, x + 2, y + 3, x + size - 3, y + 3, ot_z, 190, 190, 190);
         draw_line(context, x + 3, y + size - 4, x + size - 4, y + size - 4, ot_z, 70, 70, 70);
     } else if (block_type == BLOCK_SAND) {

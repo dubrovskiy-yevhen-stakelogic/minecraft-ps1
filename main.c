@@ -114,7 +114,7 @@
 #define BLOCK_BREAK_DIRT_FRAMES 90
 #define BLOCK_BREAK_GRASS_FRAMES 100
 #define BLOCK_BREAK_SAND_FRAMES 65
-#define BLOCK_BREAK_STONE_FRAMES 170
+#define BLOCK_BREAK_COBBLESTONE_FRAMES 170
 
 #define MAX_DROPPED_ITEMS 32
 #define PICKUP_DISTANCE_XZ 42
@@ -246,7 +246,7 @@ enum {
     BLOCK_AIR = 0,
     BLOCK_DIRT = 1,
     BLOCK_GRASS = 2,
-    BLOCK_STONE = 3,
+    BLOCK_COBBLESTONE = 3,
     BLOCK_SAND = 4,
     BLOCK_LOG = 5,
     BLOCK_PLANKS = 6,
@@ -302,7 +302,7 @@ static GameState game_state = {
 
         .hotbar_slot_blocks = {
             { BLOCK_DIRT, STACK_MAX_COUNT },
-            { BLOCK_STONE, STACK_MAX_COUNT },
+            { BLOCK_COBBLESTONE, STACK_MAX_COUNT },
             { BLOCK_SAND, STACK_MAX_COUNT },
             { BLOCK_AIR, 0 },
             { BLOCK_AIR, 0 },
@@ -586,7 +586,7 @@ static void apply_save_data(const SaveData *save) {
                 game_state.world.block_edits[i].type != BLOCK_AIR &&
                 game_state.world.block_edits[i].type != BLOCK_DIRT &&
                 game_state.world.block_edits[i].type != BLOCK_GRASS &&
-                game_state.world.block_edits[i].type != BLOCK_STONE &&
+                game_state.world.block_edits[i].type != BLOCK_COBBLESTONE &&
                 game_state.world.block_edits[i].type != BLOCK_SAND &&
                 game_state.world.block_edits[i].type != BLOCK_LOG &&
                 game_state.world.block_edits[i].type != BLOCK_PLANKS &&

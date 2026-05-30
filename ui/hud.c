@@ -22,7 +22,7 @@ static int block_type_to_icon_texture(int block_type) {
         return 1;
     }
 
-    if (block_type == BLOCK_STONE) {
+    if (block_type == BLOCK_COBBLESTONE) {
         return 2;
     }
 

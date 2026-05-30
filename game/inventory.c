@@ -28,7 +28,7 @@ static int is_placeable_block_type(int item_type) {
     return
         item_type == BLOCK_DIRT ||
         item_type == BLOCK_GRASS ||
-        item_type == BLOCK_STONE ||
+        item_type == BLOCK_COBBLESTONE ||
         item_type == BLOCK_SAND ||
         item_type == BLOCK_LOG ||
         item_type == BLOCK_PLANKS ||
@@ -212,7 +212,7 @@ static void reset_inventory_items(void) {
     game_state.inventory.hotbar_slot_blocks[0].type = BLOCK_DIRT;
     game_state.inventory.hotbar_slot_blocks[0].count = STACK_MAX_COUNT;
 
-    game_state.inventory.hotbar_slot_blocks[1].type = BLOCK_STONE;
+    game_state.inventory.hotbar_slot_blocks[1].type = BLOCK_COBBLESTONE;
     game_state.inventory.hotbar_slot_blocks[1].count = STACK_MAX_COUNT;
 
     game_state.inventory.hotbar_slot_blocks[2].type = BLOCK_SAND;
