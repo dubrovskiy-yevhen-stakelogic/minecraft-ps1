@@ -95,6 +95,15 @@
 #define CRAFT_SLOT_COUNT 4
 #define INVENTORY_CURSOR_CRAFT_START (INVENTORY_STORAGE_SLOT_COUNT + HOTBAR_SLOT_COUNT)
 #define INVENTORY_CURSOR_CRAFT_OUTPUT (INVENTORY_CURSOR_CRAFT_START + CRAFT_SLOT_COUNT)
+
+#define WORKBENCH_CRAFT_COLS 3
+#define WORKBENCH_CRAFT_ROWS 3
+#define WORKBENCH_CRAFT_SLOT_COUNT (WORKBENCH_CRAFT_COLS * WORKBENCH_CRAFT_ROWS)
+#define WORKBENCH_CURSOR_CRAFT_START 0
+#define WORKBENCH_CURSOR_OUTPUT WORKBENCH_CRAFT_SLOT_COUNT
+#define WORKBENCH_CURSOR_STORAGE_START (WORKBENCH_CURSOR_OUTPUT + 1)
+#define WORKBENCH_CURSOR_HOTBAR_START (WORKBENCH_CURSOR_STORAGE_START + INVENTORY_STORAGE_SLOT_COUNT)
+
 #define STACK_MAX_COUNT 64
 
 #define BLOCK_BREAK_MIN_FRAMES 45
@@ -222,7 +231,8 @@ enum {
     APP_STATE_MENU = 0,
     APP_STATE_PLAY = 1,
     APP_STATE_PAUSE = 2,
-    APP_STATE_INVENTORY = 3
+    APP_STATE_INVENTORY = 3,
+    APP_STATE_WORKBENCH = 4
 };
 
 enum {
@@ -232,7 +242,8 @@ enum {
     BLOCK_STONE = 3,
     BLOCK_SAND = 4,
     BLOCK_LOG = 5,
-    BLOCK_PLANKS = 6
+    BLOCK_PLANKS = 6,
+    BLOCK_WORKBENCH = 7
 };
 
 enum {
@@ -293,6 +304,7 @@ static int autojump_enabled = 1;
 static int selected_hotbar_slot = 0;
 static int player_health_hearts = HEART_COUNT;
 static int inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
+static int workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
 static ItemStack inventory_held_stack = { BLOCK_AIR, 0 };
 
 static ItemStack hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
@@ -309,6 +321,20 @@ static ItemStack hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
 
 static ItemStack crafting_slots[CRAFT_SLOT_COUNT] = {
     { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 }
+};
+
+static ItemStack workbench_crafting_slots[WORKBENCH_CRAFT_SLOT_COUNT] = {
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+    { BLOCK_AIR, 0 },
+
     { BLOCK_AIR, 0 },
     { BLOCK_AIR, 0 },
     { BLOCK_AIR, 0 }
@@ -1072,7 +1098,8 @@ static void apply_save_data(const SaveData *save) {
                 block_edits[i].type != BLOCK_STONE &&
                 block_edits[i].type != BLOCK_SAND &&
                 block_edits[i].type != BLOCK_LOG &&
-                block_edits[i].type != BLOCK_PLANKS
+                block_edits[i].type != BLOCK_PLANKS &&
+                block_edits[i].type != BLOCK_WORKBENCH
             ) {
                 block_edits[i].type = BLOCK_DIRT;
             }
@@ -1559,6 +1586,10 @@ static int get_block_hardness_frames(int block_type) {
         return BLOCK_BREAK_GRASS_FRAMES;
     }
 
+    if (block_type == BLOCK_WORKBENCH) {
+        return BLOCK_BREAK_GRASS_FRAMES;
+    }
+
     if (block_type == BLOCK_DIRT) {
         return BLOCK_BREAK_DIRT_FRAMES;
     }
@@ -1977,6 +2008,22 @@ static void update_input(void) {
         add_target_block();
     }
 
+    if (pressed_this_frame & PAD_CROSS) {
+        const RaycastHit use_hit = raycast_block();
+
+        if (
+            use_hit.found &&
+            get_block_type(use_hit.hit_x, use_hit.hit_y, use_hit.hit_z) == BLOCK_WORKBENCH
+        ) {
+            reset_block_breaking();
+            app_state = APP_STATE_WORKBENCH;
+            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
+            set_system_status("WORKBENCH", 45);
+            pad_previous_buttons = buttons;
+            return;
+        }
+    }
+
     if (buttons & PAD_LEFT) {
         camera_yaw = (camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
     }
@@ -2354,6 +2401,27 @@ static void get_face_color(int block_type, int face, uint8_t *r, uint8_t *g, uin
         *r = 148;
         *g = 96;
         *b = 48;
+        return;
+    }
+
+    if (block_type == BLOCK_WORKBENCH) {
+        if (face == FACE_POS_Y) {
+            *r = 172;
+            *g = 116;
+            *b = 56;
+            return;
+        }
+
+        if (face == FACE_NEG_Y) {
+            *r = 76;
+            *g = 48;
+            *b = 24;
+            return;
+        }
+
+        *r = 126;
+        *g = 78;
+        *b = 38;
         return;
     }
 
@@ -2995,12 +3063,21 @@ static void draw_minecraft_texture_block(
             break;
 
         case 7:
-        default:
             draw_filled_rect(context, x, y, size, size, z + 1, 166, 108, 52);
             draw_filled_rect(context, x, y + (size / 3), size, 1, z, 104, 64, 32);
             draw_filled_rect(context, x, y + ((size * 2) / 3), size, 1, z, 104, 64, 32);
             draw_filled_rect(context, x + (size / 2), y, 1, size, z, 196, 142, 76);
             draw_texture_speckles(context, x, y, size, size, z, seed, 118, 76, 38);
+            break;
+
+        case 8:
+        default:
+            draw_filled_rect(context, x, y, size, size, z + 1, 132, 78, 36);
+            draw_filled_rect(context, x + 2, y + 2, size - 4, size - 4, z, 168, 112, 54);
+            draw_filled_rect(context, x + 4, y + 4, size - 8, size - 8, z, 96, 58, 28);
+            draw_filled_rect(context, x + 5, y + 5, size - 10, size - 10, z, 188, 136, 68);
+            draw_line(context, x + 3, y + (size / 2), x + size - 4, y + (size / 2), z, 78, 48, 24);
+            draw_line(context, x + (size / 2), y + 3, x + (size / 2), y + size - 4, z, 78, 48, 24);
             break;
     }
 
@@ -3077,6 +3154,10 @@ static int dropped_item_texture_type(uint8_t block_type) {
         return 7;
     }
 
+    if (block_type == BLOCK_WORKBENCH) {
+        return 8;
+    }
+
     if (block_type == BLOCK_GRASS) {
         return 0;
     }
@@ -3125,6 +3206,9 @@ static void draw_dropped_item_icon(
     } else if (block_type == BLOCK_PLANKS) {
         draw_line(context, x + 1, y + (size / 3), x + size - 2, y + (size / 3), ot_z, 96, 58, 30);
         draw_line(context, x + 1, y + ((size * 2) / 3), x + size - 2, y + ((size * 2) / 3), ot_z, 96, 58, 30);
+    } else if (block_type == BLOCK_WORKBENCH) {
+        draw_line(context, x + 2, y + 2, x + size - 3, y + size - 3, ot_z, 64, 38, 18);
+        draw_line(context, x + size - 3, y + 2, x + 2, y + size - 3, ot_z, 64, 38, 18);
     }
 }
 
@@ -3330,6 +3414,10 @@ static int block_type_to_icon_texture(int block_type) {
 
     if (block_type == BLOCK_PLANKS) {
         return 7;
+    }
+
+    if (block_type == BLOCK_WORKBENCH) {
+        return 8;
     }
 
     if (block_type == BLOCK_GRASS) {
@@ -3659,6 +3747,8 @@ static void quick_move_inventory_slot_to_hotbar(void) {
 static ItemStack get_crafting_output_stack(void) {
     ItemStack result;
     int log_slot = -1;
+    int non_empty_count = 0;
+    int plank_count = 0;
 
     result.type = BLOCK_AIR;
     result.count = 0;
@@ -3668,22 +3758,37 @@ static ItemStack get_crafting_output_stack(void) {
             continue;
         }
 
+        non_empty_count++;
+
         /*
-         * Minecraft-like recipe:
+         * Recipe 1:
          * one stack of logs in any crafting slot produces 4 planks.
          * The stack may contain any count; taking the output consumes only 1 log.
          */
         if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count >= 1 && log_slot < 0) {
             log_slot = i;
-            continue;
         }
 
+        /*
+         * Recipe 2:
+         * four planks, one in each 2x2 slot, produce a workbench.
+         * Each slot can contain a stack; crafting consumes 1 plank per slot.
+         */
+        if (crafting_slots[i].type == BLOCK_PLANKS && crafting_slots[i].count >= 1) {
+            plank_count++;
+        }
+    }
+
+    if (non_empty_count == 1 && log_slot >= 0) {
+        result.type = BLOCK_PLANKS;
+        result.count = 4;
         return result;
     }
 
-    if (log_slot >= 0) {
-        result.type = BLOCK_PLANKS;
-        result.count = 4;
+    if (non_empty_count == CRAFT_SLOT_COUNT && plank_count == CRAFT_SLOT_COUNT) {
+        result.type = BLOCK_WORKBENCH;
+        result.count = 1;
+        return result;
     }
 
     return result;
@@ -3718,12 +3823,23 @@ static void add_stack_to_hand(const ItemStack *stack) {
     }
 }
 
-static void consume_one_crafting_input_log(void) {
-    for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
-        if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count > 0) {
-            crafting_slots[i].count--;
-            normalize_stack(&(crafting_slots[i]));
-            return;
+static void consume_current_crafting_inputs(const ItemStack *output) {
+    if (output->type == BLOCK_PLANKS) {
+        for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
+            if (crafting_slots[i].type == BLOCK_LOG && crafting_slots[i].count > 0) {
+                crafting_slots[i].count--;
+                normalize_stack(&(crafting_slots[i]));
+                return;
+            }
+        }
+    }
+
+    if (output->type == BLOCK_WORKBENCH) {
+        for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
+            if (crafting_slots[i].type == BLOCK_PLANKS && crafting_slots[i].count > 0) {
+                crafting_slots[i].count--;
+                normalize_stack(&(crafting_slots[i]));
+            }
         }
     }
 }
@@ -3742,8 +3858,13 @@ static void take_crafting_output(void) {
     }
 
     add_stack_to_hand(&output);
-    consume_one_crafting_input_log();
-    set_system_status("CRAFTED PLANKS", 55);
+    consume_current_crafting_inputs(&output);
+
+    if (output.type == BLOCK_WORKBENCH) {
+        set_system_status("CRAFTED BENCH", 55);
+    } else {
+        set_system_status("CRAFTED PLANKS", 55);
+    }
 }
 
 static int quick_craft_output_to_inventory(void) {
@@ -3765,7 +3886,7 @@ static int quick_craft_output_to_inventory(void) {
             break;
         }
 
-        consume_one_crafting_input_log();
+        consume_current_crafting_inputs(&output);
         crafted_count += output.count;
 
         guard++;
@@ -3868,7 +3989,7 @@ static void draw_inventory_grid(RenderContext *context) {
 static void draw_inventory_crafting_area(RenderContext *context) {
     const ItemStack output = get_crafting_output_stack();
 
-    draw_text(context, 190, 34, 0, "CRAFTING");
+    draw_text(context, 188, 34, 0, "CRAFTING");
 
     draw_inventory_slot(
         context,
@@ -3978,6 +4099,500 @@ static void draw_inventory_screen(RenderContext *context) {
     }
 }
 
+static ItemStack *get_workbench_cursor_stack_ptr(void) {
+    if (workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
+        return &(workbench_crafting_slots[workbench_cursor_slot]);
+    }
+
+    if (workbench_cursor_slot < WORKBENCH_CURSOR_HOTBAR_START) {
+        return &(inventory_storage_blocks[workbench_cursor_slot - WORKBENCH_CURSOR_STORAGE_START]);
+    }
+
+    return &(hotbar_slot_blocks[workbench_cursor_slot - WORKBENCH_CURSOR_HOTBAR_START]);
+}
+
+static int is_workbench_2x2_plank_recipe_at(int start_col, int start_row) {
+    for (int row = 0; row < WORKBENCH_CRAFT_ROWS; row++) {
+        for (int col = 0; col < WORKBENCH_CRAFT_COLS; col++) {
+            const int index = (row * WORKBENCH_CRAFT_COLS) + col;
+            const int inside =
+                col >= start_col &&
+                col < start_col + 2 &&
+                row >= start_row &&
+                row < start_row + 2;
+
+            if (inside) {
+                if (
+                    workbench_crafting_slots[index].type != BLOCK_PLANKS ||
+                    workbench_crafting_slots[index].count == 0
+                ) {
+                    return 0;
+                }
+            } else if (!stack_is_empty(&(workbench_crafting_slots[index]))) {
+                return 0;
+            }
+        }
+    }
+
+    return 1;
+}
+
+static int find_workbench_2x2_plank_recipe_start(void) {
+    for (int row = 0; row <= 1; row++) {
+        for (int col = 0; col <= 1; col++) {
+            if (is_workbench_2x2_plank_recipe_at(col, row)) {
+                return (row * WORKBENCH_CRAFT_COLS) + col;
+            }
+        }
+    }
+
+    return -1;
+}
+
+static ItemStack get_workbench_output_stack(void) {
+    ItemStack result;
+    int log_slot = -1;
+    int non_empty_count = 0;
+    const int plank_recipe_start = find_workbench_2x2_plank_recipe_start();
+
+    result.type = BLOCK_AIR;
+    result.count = 0;
+
+    for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
+        if (stack_is_empty(&(workbench_crafting_slots[i]))) {
+            continue;
+        }
+
+        non_empty_count++;
+
+        if (
+            workbench_crafting_slots[i].type == BLOCK_LOG &&
+            workbench_crafting_slots[i].count >= 1 &&
+            log_slot < 0
+        ) {
+            log_slot = i;
+        }
+    }
+
+    if (non_empty_count == 1 && log_slot >= 0) {
+        result.type = BLOCK_PLANKS;
+        result.count = 4;
+        return result;
+    }
+
+    if (plank_recipe_start >= 0) {
+        result.type = BLOCK_WORKBENCH;
+        result.count = 1;
+        return result;
+    }
+
+    return result;
+}
+
+static void consume_current_workbench_inputs(const ItemStack *output) {
+    if (output->type == BLOCK_PLANKS) {
+        for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
+            if (workbench_crafting_slots[i].type == BLOCK_LOG && workbench_crafting_slots[i].count > 0) {
+                workbench_crafting_slots[i].count--;
+                normalize_stack(&(workbench_crafting_slots[i]));
+                return;
+            }
+        }
+    }
+
+    if (output->type == BLOCK_WORKBENCH) {
+        const int start = find_workbench_2x2_plank_recipe_start();
+
+        if (start >= 0) {
+            const int start_col = start % WORKBENCH_CRAFT_COLS;
+            const int start_row = start / WORKBENCH_CRAFT_COLS;
+
+            for (int row = start_row; row < start_row + 2; row++) {
+                for (int col = start_col; col < start_col + 2; col++) {
+                    const int index = (row * WORKBENCH_CRAFT_COLS) + col;
+
+                    if (
+                        workbench_crafting_slots[index].type == BLOCK_PLANKS &&
+                        workbench_crafting_slots[index].count > 0
+                    ) {
+                        workbench_crafting_slots[index].count--;
+                        normalize_stack(&(workbench_crafting_slots[index]));
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void take_workbench_output(void) {
+    const ItemStack output = get_workbench_output_stack();
+
+    if (stack_is_empty(&output)) {
+        set_system_status("NO RECIPE", 45);
+        return;
+    }
+
+    if (!can_add_stack_to_hand(&output)) {
+        set_system_status("HAND FULL", 45);
+        return;
+    }
+
+    add_stack_to_hand(&output);
+    consume_current_workbench_inputs(&output);
+
+    if (output.type == BLOCK_WORKBENCH) {
+        set_system_status("CRAFTED BENCH", 55);
+    } else {
+        set_system_status("CRAFTED PLANKS", 55);
+    }
+}
+
+static int quick_craft_workbench_output_to_inventory(void) {
+    int crafted_count = 0;
+    int guard = 0;
+
+    for (;;) {
+        const ItemStack output = get_workbench_output_stack();
+
+        if (stack_is_empty(&output)) {
+            break;
+        }
+
+        if (get_inventory_accept_capacity(output.type) < output.count) {
+            break;
+        }
+
+        if (add_items_to_inventory(output.type, output.count) != 0) {
+            break;
+        }
+
+        consume_current_workbench_inputs(&output);
+        crafted_count += output.count;
+
+        guard++;
+
+        if (guard > STACK_MAX_COUNT) {
+            break;
+        }
+    }
+
+    if (crafted_count > 0) {
+        set_system_status("SHIFT CRAFTED", 70);
+        return 1;
+    }
+
+    set_system_status("NO SPACE", 55);
+    return 0;
+}
+
+static void swap_workbench_held_with_cursor(void) {
+    ItemStack *slot;
+
+    if (workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+        take_workbench_output();
+        return;
+    }
+
+    slot = get_workbench_cursor_stack_ptr();
+    merge_or_swap_inventory_held_with_slot(slot);
+}
+
+static void quick_move_workbench_cursor_to_hotbar(void) {
+    ItemStack *slot;
+
+    if (workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+        return;
+    }
+
+    slot = get_workbench_cursor_stack_ptr();
+
+    if (!stack_is_empty(slot)) {
+        const int remaining = add_items_to_inventory(slot->type, slot->count);
+
+        if (remaining == 0) {
+            slot->type = BLOCK_AIR;
+            slot->count = 0;
+            set_system_status("QUICK MOVED", 45);
+        } else {
+            slot->count = (uint8_t)remaining;
+            normalize_stack(slot);
+            set_system_status("NO SPACE", 45);
+        }
+    }
+}
+
+static void move_workbench_cursor(int dx, int dy) {
+    if (workbench_cursor_slot < WORKBENCH_CURSOR_OUTPUT) {
+        int row = workbench_cursor_slot / WORKBENCH_CRAFT_COLS;
+        int col = workbench_cursor_slot % WORKBENCH_CRAFT_COLS;
+
+        if (dx > 0 && col == WORKBENCH_CRAFT_COLS - 1) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
+            return;
+        }
+
+        if (dy > 0 && row == WORKBENCH_CRAFT_ROWS - 1) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
+            return;
+        }
+
+        col += dx;
+        row += dy;
+
+        if (col < 0) {
+            col = WORKBENCH_CRAFT_COLS - 1;
+        }
+
+        if (col >= WORKBENCH_CRAFT_COLS) {
+            col = 0;
+        }
+
+        if (row < 0) {
+            row = WORKBENCH_CRAFT_ROWS - 1;
+        }
+
+        if (row >= WORKBENCH_CRAFT_ROWS) {
+            row = 0;
+        }
+
+        workbench_cursor_slot = (row * WORKBENCH_CRAFT_COLS) + col;
+        return;
+    }
+
+    if (workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+        if (dx < 0) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 5;
+            return;
+        }
+
+        if (dy > 0) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + 4;
+            return;
+        }
+
+        if (dy < 0) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + 2;
+            return;
+        }
+
+        return;
+    }
+
+    if (workbench_cursor_slot < WORKBENCH_CURSOR_HOTBAR_START) {
+        int local = workbench_cursor_slot - WORKBENCH_CURSOR_STORAGE_START;
+        int row = local / INVENTORY_STORAGE_COLS;
+        int col = local % INVENTORY_STORAGE_COLS;
+
+        if (dy < 0 && row == 0) {
+            if (col < 3) {
+                workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START + (2 * WORKBENCH_CRAFT_COLS) + col;
+            } else {
+                workbench_cursor_slot = WORKBENCH_CURSOR_OUTPUT;
+            }
+            return;
+        }
+
+        col += dx;
+        row += dy;
+
+        if (col < 0) {
+            col = INVENTORY_STORAGE_COLS - 1;
+        }
+
+        if (col >= INVENTORY_STORAGE_COLS) {
+            col = 0;
+        }
+
+        if (row < 0) {
+            row = INVENTORY_STORAGE_ROWS - 1;
+        }
+
+        if (row >= INVENTORY_STORAGE_ROWS) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
+            return;
+        }
+
+        workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + (row * INVENTORY_STORAGE_COLS) + col;
+        return;
+    }
+
+    {
+        int col = workbench_cursor_slot - WORKBENCH_CURSOR_HOTBAR_START;
+
+        col += dx;
+
+        if (col < 0) {
+            col = INVENTORY_STORAGE_COLS - 1;
+        }
+
+        if (col >= INVENTORY_STORAGE_COLS) {
+            col = 0;
+        }
+
+        if (dy < 0) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + ((INVENTORY_STORAGE_ROWS - 1) * INVENTORY_STORAGE_COLS) + col;
+        } else if (dy > 0) {
+            workbench_cursor_slot = WORKBENCH_CURSOR_STORAGE_START + col;
+        } else {
+            workbench_cursor_slot = WORKBENCH_CURSOR_HOTBAR_START + col;
+        }
+    }
+}
+
+static void update_workbench_input(void) {
+    const uint16_t buttons = read_pad_buttons();
+    const uint16_t pressed_this_frame = buttons & ~pad_previous_buttons;
+
+    if ((pressed_this_frame & PAD_START) || (pressed_this_frame & PAD_TRIANGLE)) {
+        app_state = APP_STATE_PLAY;
+        pad_previous_buttons = buttons;
+        return;
+    }
+
+    if (pressed_this_frame & PAD_UP) {
+        move_workbench_cursor(0, -1);
+    }
+
+    if (pressed_this_frame & PAD_DOWN) {
+        move_workbench_cursor(0, 1);
+    }
+
+    if (pressed_this_frame & PAD_LEFT) {
+        move_workbench_cursor(-1, 0);
+    }
+
+    if (pressed_this_frame & PAD_RIGHT) {
+        move_workbench_cursor(1, 0);
+    }
+
+    if (
+        (pressed_this_frame & PAD_CROSS) ||
+        (pressed_this_frame & PAD_CIRCLE)
+    ) {
+        if ((buttons & PAD_R2) && workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT) {
+            quick_craft_workbench_output_to_inventory();
+        } else {
+            swap_workbench_held_with_cursor();
+        }
+    }
+
+    if (pressed_this_frame & PAD_SQUARE) {
+        quick_move_workbench_cursor_to_hotbar();
+    }
+
+    pad_previous_buttons = buttons;
+}
+
+static void draw_workbench_crafting_grid(RenderContext *context) {
+    const int start_x = 54;
+    const int start_y = 36;
+
+    draw_text(context, 54, 24, 0, "CRAFTING 3X3");
+
+    for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
+        const int row = i / WORKBENCH_CRAFT_COLS;
+        const int col = i % WORKBENCH_CRAFT_COLS;
+
+        draw_inventory_slot(
+            context,
+            start_x + (col * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
+            start_y + (row * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
+            workbench_crafting_slots[i].type,
+            workbench_crafting_slots[i].count,
+            workbench_cursor_slot == i,
+            0,
+            900 + i
+        );
+    }
+
+    draw_text(context, 126, 58, 0, ">");
+}
+
+static void draw_workbench_storage_grid(RenderContext *context) {
+    const int storage_x = 70;
+    const int storage_y = 98;
+    const int hotbar_y = 164;
+
+    draw_text(context, storage_x, 88, 0, "STORAGE");
+
+    for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
+        const int row = i / INVENTORY_STORAGE_COLS;
+        const int col = i % INVENTORY_STORAGE_COLS;
+
+        draw_inventory_slot(
+            context,
+            storage_x + (col * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
+            storage_y + (row * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
+            inventory_storage_blocks[i].type,
+            inventory_storage_blocks[i].count,
+            workbench_cursor_slot == WORKBENCH_CURSOR_STORAGE_START + i,
+            0,
+            1000 + i
+        );
+    }
+
+    for (int i = 0; i < HOTBAR_SLOT_COUNT; i++) {
+        draw_inventory_slot(
+            context,
+            storage_x + (i * (INVENTORY_SLOT_SIZE + INVENTORY_SLOT_GAP)),
+            hotbar_y,
+            hotbar_slot_blocks[i].type,
+            hotbar_slot_blocks[i].count,
+            workbench_cursor_slot == WORKBENCH_CURSOR_HOTBAR_START + i,
+            0,
+            1100 + i
+        );
+    }
+}
+
+static void draw_workbench_screen(RenderContext *context) {
+    const ItemStack output = get_workbench_output_stack();
+
+    draw_filled_rect(context, 0, 0, SCREEN_W, SCREEN_H, 7, 16, 16, 20);
+    draw_panel(context, 16, 12, 288, 216, 4, 88, 88, 88, 214, 214, 214);
+
+    draw_text(context, 120, 20, 0, "WORKBENCH");
+
+    draw_workbench_crafting_grid(context);
+
+    draw_inventory_slot(
+        context,
+        150,
+        52,
+        output.type,
+        output.count,
+        workbench_cursor_slot == WORKBENCH_CURSOR_OUTPUT,
+        stack_is_empty(&output),
+        930
+    );
+
+    draw_workbench_storage_grid(context);
+
+    draw_text(context, 56, 188, 0, "DPAD MOVE  CROSS/CIRCLE PICK/SWAP/CRAFT");
+    draw_text(context, 56, 202, 0, "R2+X SHIFT-CRAFT  START BACK");
+
+    if (!stack_is_empty(&inventory_held_stack)) {
+        const int texture_type = block_type_to_icon_texture(inventory_held_stack.type);
+
+        draw_text(context, 214, 56, 0, "HAND");
+        draw_inventory_slot(
+            context,
+            256,
+            52,
+            inventory_held_stack.type,
+            inventory_held_stack.count,
+            1,
+            0,
+            1200 + texture_type
+        );
+    }
+
+    if (system_status_timer > 0) {
+        draw_minecraft_button(context, 104, 226, 112, 14, 0);
+        draw_text(context, 122, 227, 0, system_status_text);
+    }
+}
+
 static void draw_game_hud(RenderContext *context) {
     draw_hearts(context);
     draw_hotbar(context);
@@ -4020,6 +4635,11 @@ static void reset_inventory_items(void) {
     for (int i = 0; i < CRAFT_SLOT_COUNT; i++) {
         crafting_slots[i].type = BLOCK_AIR;
         crafting_slots[i].count = 0;
+    }
+
+    for (int i = 0; i < WORKBENCH_CRAFT_SLOT_COUNT; i++) {
+        workbench_crafting_slots[i].type = BLOCK_AIR;
+        workbench_crafting_slots[i].count = 0;
     }
 
     inventory_held_stack.type = BLOCK_AIR;
@@ -4424,6 +5044,13 @@ int main(int argc, const char **argv) {
         if (app_state == APP_STATE_INVENTORY) {
             update_inventory_input();
             draw_inventory_screen(&ctx);
+            flip_buffers(&ctx);
+            continue;
+        }
+
+        if (app_state == APP_STATE_WORKBENCH) {
+            update_workbench_input();
+            draw_workbench_screen(&ctx);
             flip_buffers(&ctx);
             continue;
         }
