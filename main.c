@@ -451,65 +451,35 @@ static void spawn_dropped_item(
 static void take_crafting_output(void);
 
 /*
+ * Stage 1 architecture split.
+ *
+ * These engine files are included directly for now, so the current CMake build
+ * that compiles only main.c keeps working. After the project structure settles,
+ * they can be compiled as normal separate translation units.
+ */
+#include "engine/fixed_math.h"
+#include "engine/ps1_input.h"
+#include "engine/ps1_render.h"
+
+#include "engine/fixed_math.c"
+#include "engine/ps1_input.c"
+#include "engine/ps1_render.c"
+
+/*
  * 64-step sine table.
  * Scale: 1024 = 1.0
  *
  * We interpolate between values, so angle resolution is 4096 steps.
  */
-static const int16_t sin_table[64] = {
-    0, 100, 200, 297, 391, 483, 569, 650,
-    724, 792, 851, 903, 946, 980, 1004, 1019,
-    1024, 1019, 1004, 980, 946, 903, 851, 792,
-    724, 650, 569, 483, 391, 297, 200, 100,
-    0, -100, -200, -297, -391, -483, -569, -650,
-    -724, -792, -851, -903, -946, -980, -1004, -1019,
-    -1024, -1019, -1004, -980, -946, -903, -851, -792,
-    -724, -650, -569, -483, -391, -297, -200, -100
-};
 
-static int clamp_int(int value, int min_value, int max_value) {
-    if (value < min_value) {
-        return min_value;
-    }
 
-    if (value > max_value) {
-        return max_value;
-    }
 
-    return value;
-}
 
-static int iabs(int value) {
-    return value < 0 ? -value : value;
-}
-
-static int isin(int angle) {
-    angle &= ANGLE_MASK;
-
-    const int index = (angle >> ANGLE_FRAC_BITS) & 63;
-    const int frac = angle & ((1 << ANGLE_FRAC_BITS) - 1);
-
-    const int a = sin_table[index];
-    const int b = sin_table[(index + 1) & 63];
-
-    return a + (((b - a) * frac) >> ANGLE_FRAC_BITS);
-}
-
-static int icos(int angle) {
-    return isin(angle + ANGLE_QUARTER);
-}
 
 /*
  * C integer division truncates toward zero.
  * We need floor division so negative world coordinates map to correct tiles.
  */
-static int floor_div(int value, int divisor) {
-    if (value >= 0) {
-        return value / divisor;
-    }
-
-    return -(((-value) + divisor - 1) / divisor);
-}
 
 static int world_to_tile(int value) {
     return floor_div(value + BLOCK_HALF, BLOCK_SIZE);
@@ -638,26 +608,6 @@ static int get_top_solid_block_y(int tile_x, int tile_z) {
     return -1;
 }
 
-static void setup_context(RenderContext *context, int w, int h, int r, int g, int b) {
-    SetDefDrawEnv(&(context->buffers[0].draw_env), 0, 0, w, h);
-    SetDefDispEnv(&(context->buffers[0].disp_env), 0, 0, w, h);
-
-    SetDefDrawEnv(&(context->buffers[1].draw_env), 0, h, w, h);
-    SetDefDispEnv(&(context->buffers[1].disp_env), 0, h, w, h);
-
-    setRGB0(&(context->buffers[0].draw_env), r, g, b);
-    setRGB0(&(context->buffers[1].draw_env), r, g, b);
-
-    context->buffers[0].draw_env.isbg = 1;
-    context->buffers[1].draw_env.isbg = 1;
-
-    context->active_buffer = 0;
-    context->next_packet = context->buffers[0].buffer;
-
-    ClearOTagR(context->buffers[0].ot, OT_LENGTH);
-
-    SetDispMask(1);
-}
 
 static void upload_texture_assets(void) {
     RECT atlas_rect;
@@ -674,118 +624,11 @@ static void upload_texture_assets(void) {
     DrawSync(0);
 }
 
-static void flip_buffers(RenderContext *context) {
-    DrawSync(0);
-    VSync(0);
 
-    RenderBuffer *draw_buffer = &(context->buffers[context->active_buffer]);
-    RenderBuffer *disp_buffer = &(context->buffers[context->active_buffer ^ 1]);
 
-    PutDispEnv(&(disp_buffer->disp_env));
-    DrawOTagEnv(&(draw_buffer->ot[OT_LENGTH - 1]), &(draw_buffer->draw_env));
 
-    context->active_buffer ^= 1;
-    context->next_packet = disp_buffer->buffer;
 
-    ClearOTagR(disp_buffer->ot, OT_LENGTH);
-}
 
-static void *new_primitive(RenderContext *context, int z, size_t size) {
-    if (z < 0) {
-        z = 0;
-    }
-
-    if (z >= OT_LENGTH) {
-        z = OT_LENGTH - 1;
-    }
-
-    RenderBuffer *buffer = &(context->buffers[context->active_buffer]);
-    uint8_t *prim = context->next_packet;
-
-    addPrim(&(buffer->ot[z]), prim);
-
-    context->next_packet += size;
-    assert(context->next_packet <= &(buffer->buffer[BUFFER_LENGTH]));
-
-    return (void *)prim;
-}
-
-static void draw_text(RenderContext *context, int x, int y, int z, const char *text) {
-    RenderBuffer *buffer = &(context->buffers[context->active_buffer]);
-
-    context->next_packet = (uint8_t *)FntSort(
-        &(buffer->ot[z]),
-        context->next_packet,
-        x,
-        y,
-        text
-    );
-
-    assert(context->next_packet <= &(buffer->buffer[BUFFER_LENGTH]));
-}
-
-static void draw_line(
-    RenderContext *context,
-    int x0,
-    int y0,
-    int x1,
-    int y1,
-    int z,
-    uint8_t r,
-    uint8_t g,
-    uint8_t b
-) {
-    LINE_F2 *line = (LINE_F2 *)new_primitive(context, z, sizeof(LINE_F2));
-
-    setLineF2(line);
-    setRGB0(line, r, g, b);
-    setXY2(line, x0, y0, x1, y1);
-}
-
-static void draw_filled_rect(
-    RenderContext *context,
-    int x,
-    int y,
-    int w,
-    int h,
-    int z,
-    uint8_t r,
-    uint8_t g,
-    uint8_t b
-) {
-    TILE *tile = (TILE *)new_primitive(context, z, sizeof(TILE));
-
-    setTile(tile);
-    setRGB0(tile, r, g, b);
-    setXY0(tile, x, y);
-    setWH(tile, w, h);
-}
-
-static void draw_panel(
-    RenderContext *context,
-    int x,
-    int y,
-    int w,
-    int h,
-    int z,
-    uint8_t fill_r,
-    uint8_t fill_g,
-    uint8_t fill_b,
-    uint8_t border_r,
-    uint8_t border_g,
-    uint8_t border_b
-) {
-    draw_filled_rect(context, x + 3, y + 3, w, h, z + 2, 20, 20, 24);
-    draw_filled_rect(context, x, y, w, h, z + 1, fill_r, fill_g, fill_b);
-
-    draw_line(context, x, y, x + w - 1, y, z, border_r, border_g, border_b);
-    draw_line(context, x, y, x, y + h - 1, z, border_r, border_g, border_b);
-    draw_line(context, x + w - 1, y, x + w - 1, y + h - 1, z, 28, 28, 32);
-    draw_line(context, x, y + h - 1, x + w - 1, y + h - 1, z, 28, 28, 32);
-
-    draw_line(context, x + 1, y + 1, x + w - 2, y + 1, z, 210, 210, 210);
-    draw_line(context, x + 1, y + 1, x + 1, y + h - 2, z, 210, 210, 210);
-}
 
 static void draw_crosshair(RenderContext *context) {
     const int cx = SCREEN_W / 2;
@@ -1280,40 +1123,7 @@ static int load_game_from_memory_card(void) {
 }
 
 
-static void init_input(void) {
-    InitPAD(
-        pad_buffers[0],
-        PAD_BUFFER_SIZE,
-        pad_buffers[1],
-        PAD_BUFFER_SIZE
-    );
 
-    StartPAD();
-    ChangeClearPAD(1);
-}
-
-static uint16_t read_pad_buttons(void) {
-    PADTYPE *pad = (PADTYPE *)pad_buffers[0];
-
-    if (pad->stat != 0) {
-        return 0;
-    }
-
-    if (
-        pad->type != PAD_ID_DIGITAL &&
-        pad->type != PAD_ID_ANALOG_STICK &&
-        pad->type != PAD_ID_ANALOG
-    ) {
-        return 0;
-    }
-
-    /*
-     * PS1 pad buttons are active-low:
-     * bit = 0 means pressed.
-     * Invert it so pressed buttons become 1.
-     */
-    return (uint16_t)(~pad->btn);
-}
 
 static int get_surface_top_block_y_at_world_position(int world_x, int world_z) {
     return get_top_solid_block_y(
