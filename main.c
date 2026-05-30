@@ -218,15 +218,15 @@ typedef struct {
     uint32_t magic;
     uint32_t version;
 
-    int camera_pos_x;
-    int camera_pos_y;
-    int camera_pos_z;
-    int camera_yaw;
-    int camera_pitch;
-    int fly_mode_enabled;
+    int save_camera_pos_x;
+    int save_camera_pos_y;
+    int save_camera_pos_z;
+    int save_camera_yaw;
+    int save_camera_pitch;
+    int save_fly_mode_enabled;
 
-    int block_edit_count;
-    BlockEdit block_edits[MAX_BLOCK_EDITS];
+    int save_block_edit_count;
+    BlockEdit save_block_edits[MAX_BLOCK_EDITS];
 
     uint32_t checksum;
 } SaveData;
@@ -262,140 +262,131 @@ enum {
 };
 
 
-static RenderContext ctx;
+#include "game/game_state.h"
 
-static Vec3i mesh_vertices[MAX_MESH_VERTICES];
-static Vec3i camera_vertices[MAX_MESH_VERTICES];
+static GameState game_state = {
+    .world = {
+        .mesh_center_tile_x = 999999,
+        .mesh_center_tile_z = 999999,
+        .mesh_dirty = 1
+    },
 
-static MeshFace mesh_faces[MAX_MESH_FACES];
+    .player = {
+        .camera_pos_x = 0,
+        .camera_pos_y = 120,
+        .camera_pos_z = 0,
+        .camera_yaw = 0,
+        .camera_pitch = DEFAULT_CAMERA_PITCH,
+        .fly_mode_enabled = 0,
+        .autojump_enabled = 1,
+        .player_health_hearts = HEART_COUNT
+    },
 
-static int mesh_vertex_count = 0;
-static int mesh_face_count = 0;
+    .app = {
+        .app_state = APP_STATE_MENU,
+        .menu_selected_option = MENU_OPTION_NEW_GAME,
+        .pause_selected_option = PAUSE_OPTION_RESUME,
+        .hud_visible = 0,
+        .fog_enabled = 0,
+        .system_status_text = "",
+        .system_status_timer = 0
+    },
 
-static int mesh_center_tile_x = 999999;
-static int mesh_center_tile_z = 999999;
-static int mesh_dirty = 1;
+    .inventory = {
+        .selected_hotbar_slot = 0,
+        .inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START,
+        .workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START,
+        .inventory_held_stack = { BLOCK_AIR, 0 },
 
-static int vertex_lookup[GRID_Y_LINES][GRID_VERTICES_PER_SIDE][GRID_VERTICES_PER_SIDE];
-static uint8_t local_blocks[WORLD_HEIGHT][PADDED_VIEW_SIZE][PADDED_VIEW_SIZE];
+        .hotbar_slot_blocks = {
+            { BLOCK_DIRT, STACK_MAX_COUNT },
+            { BLOCK_STONE, STACK_MAX_COUNT },
+            { BLOCK_SAND, STACK_MAX_COUNT },
+            { BLOCK_AIR, 0 },
+            { BLOCK_AIR, 0 },
+            { BLOCK_AIR, 0 },
+            { BLOCK_AIR, 0 },
+            { BLOCK_AIR, 0 },
+            { BLOCK_AIR, 0 }
+        }
+    },
 
-static BlockEdit block_edits[MAX_BLOCK_EDITS];
-static int block_edit_count = 0;
-
-static uint8_t pad_buffers[2][PAD_BUFFER_SIZE];
-
-static int camera_pos_x = 0;
-static int camera_pos_y = 120;
-static int camera_pos_z = 0;
-
-static int camera_yaw = 0;
-static int camera_pitch = DEFAULT_CAMERA_PITCH;
+    .breaking = {
+        .breaking_active = 0,
+        .breaking_block_x = 0,
+        .breaking_block_y = 0,
+        .breaking_block_z = 0,
+        .breaking_block_face = FACE_POS_Y,
+        .breaking_block_type = BLOCK_AIR,
+        .breaking_progress = 0,
+        .breaking_required_frames = BLOCK_BREAK_MIN_FRAMES
+    }
+};
 
 /*
- * 0 = walk on voxel world
- * 1 = free fly/debug camera
+ * Transitional aliases.
+ *
+ * They keep the already-split engine/game/ui files working without a huge
+ * risky rewrite. Later stages should delete these one group at a time and pass
+ * GameState explicitly to systems.
  */
-static int fly_mode_enabled = 0;
+#define ctx game_state.render.ctx
 
-static int app_state = APP_STATE_MENU;
-static int menu_selected_option = MENU_OPTION_NEW_GAME;
-static int pause_selected_option = PAUSE_OPTION_RESUME;
+#define mesh_vertices game_state.world.mesh_vertices
+#define camera_vertices game_state.world.camera_vertices
+#define mesh_faces game_state.world.mesh_faces
+#define mesh_vertex_count game_state.world.mesh_vertex_count
+#define mesh_face_count game_state.world.mesh_face_count
+#define mesh_center_tile_x game_state.world.mesh_center_tile_x
+#define mesh_center_tile_z game_state.world.mesh_center_tile_z
+#define mesh_dirty game_state.world.mesh_dirty
+#define vertex_lookup game_state.world.vertex_lookup
+#define local_blocks game_state.world.local_blocks
+#define block_edits game_state.world.block_edits
+#define block_edit_count game_state.world.block_edit_count
 
-/*
- * hud_visible controls only the small debug/help panel.
- * The Minecraft-style hotbar and hearts are part of the game UI and stay visible.
- */
-static int hud_visible = 0;
-static int fog_enabled = 0;
-static int autojump_enabled = 1;
-static int selected_hotbar_slot = 0;
-static int player_health_hearts = HEART_COUNT;
-static int inventory_cursor_slot = INVENTORY_CURSOR_STORAGE_START;
-static int workbench_cursor_slot = WORKBENCH_CURSOR_CRAFT_START;
-static ItemStack inventory_held_stack = { BLOCK_AIR, 0 };
+#define pad_buffers game_state.input.pad_buffers
+#define pad_previous_buttons game_state.input.pad_previous_buttons
 
-static ItemStack hotbar_slot_blocks[HOTBAR_SLOT_COUNT] = {
-    { BLOCK_DIRT, STACK_MAX_COUNT },
-    { BLOCK_STONE, STACK_MAX_COUNT },
-    { BLOCK_SAND, STACK_MAX_COUNT },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 }
-};
+#define camera_pos_x game_state.player.camera_pos_x
+#define camera_pos_y game_state.player.camera_pos_y
+#define camera_pos_z game_state.player.camera_pos_z
+#define camera_yaw game_state.player.camera_yaw
+#define camera_pitch game_state.player.camera_pitch
+#define fly_mode_enabled game_state.player.fly_mode_enabled
+#define autojump_enabled game_state.player.autojump_enabled
+#define player_health_hearts game_state.player.player_health_hearts
 
-static ItemStack crafting_slots[CRAFT_SLOT_COUNT] = {
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 }
-};
+#define app_state game_state.app.app_state
+#define menu_selected_option game_state.app.menu_selected_option
+#define pause_selected_option game_state.app.pause_selected_option
+#define hud_visible game_state.app.hud_visible
+#define fog_enabled game_state.app.fog_enabled
+#define system_status_text game_state.app.system_status_text
+#define system_status_timer game_state.app.system_status_timer
 
-static ItemStack workbench_crafting_slots[WORKBENCH_CRAFT_SLOT_COUNT] = {
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
+#define selected_hotbar_slot game_state.inventory.selected_hotbar_slot
+#define inventory_cursor_slot game_state.inventory.inventory_cursor_slot
+#define workbench_cursor_slot game_state.inventory.workbench_cursor_slot
+#define inventory_held_stack game_state.inventory.inventory_held_stack
+#define hotbar_slot_blocks game_state.inventory.hotbar_slot_blocks
+#define crafting_slots game_state.inventory.crafting_slots
+#define workbench_crafting_slots game_state.inventory.workbench_crafting_slots
+#define inventory_storage_blocks game_state.inventory.inventory_storage_blocks
 
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
+#define dropped_items game_state.dropped.dropped_items
 
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 }
-};
+#define breaking_active game_state.breaking.breaking_active
+#define breaking_block_x game_state.breaking.breaking_block_x
+#define breaking_block_y game_state.breaking.breaking_block_y
+#define breaking_block_z game_state.breaking.breaking_block_z
+#define breaking_block_face game_state.breaking.breaking_block_face
+#define breaking_block_type game_state.breaking.breaking_block_type
+#define breaking_progress game_state.breaking.breaking_progress
+#define breaking_required_frames game_state.breaking.breaking_required_frames
 
-static ItemStack inventory_storage_blocks[INVENTORY_STORAGE_SLOT_COUNT] = {
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
+#define save_buffer game_state.save.save_buffer
 
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 },
-    { BLOCK_AIR, 0 }
-};
-
-static DroppedItem dropped_items[MAX_DROPPED_ITEMS];
-
-static int breaking_active = 0;
-static int breaking_block_x = 0;
-static int breaking_block_y = 0;
-static int breaking_block_z = 0;
-static int breaking_block_face = FACE_POS_Y;
-static int breaking_block_type = BLOCK_AIR;
-static int breaking_progress = 0;
-static int breaking_required_frames = BLOCK_BREAK_MIN_FRAMES;
-
-static uint16_t pad_previous_buttons = 0;
-
-static const char *system_status_text = "";
-static int system_status_timer = 0;
-
-static uint8_t save_buffer[SAVE_BLOCK_SIZE];
 
 /* SaveData must fit after memory card header inside 1 block. */
 
@@ -599,23 +590,23 @@ static void fill_save_data(SaveData *save) {
     save->magic = SAVE_MAGIC;
     save->version = SAVE_VERSION;
 
-    save->camera_pos_x = camera_pos_x;
-    save->camera_pos_y = camera_pos_y;
-    save->camera_pos_z = camera_pos_z;
-    save->camera_yaw = camera_yaw;
-    save->camera_pitch = camera_pitch;
-    save->fly_mode_enabled = fly_mode_enabled;
+    save->save_camera_pos_x = camera_pos_x;
+    save->save_camera_pos_y = camera_pos_y;
+    save->save_camera_pos_z = camera_pos_z;
+    save->save_camera_yaw = camera_yaw;
+    save->save_camera_pitch = camera_pitch;
+    save->save_fly_mode_enabled = fly_mode_enabled;
 
-    save->block_edit_count = block_edit_count;
+    save->save_block_edit_count = block_edit_count;
 
     for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
         if (i < block_edit_count) {
-            save->block_edits[i] = block_edits[i];
+            save->save_block_edits[i] = block_edits[i];
         } else {
-            save->block_edits[i].x = 0;
-            save->block_edits[i].y = 0;
-            save->block_edits[i].z = 0;
-            save->block_edits[i].type = BLOCK_AIR;
+            save->save_block_edits[i].x = 0;
+            save->save_block_edits[i].y = 0;
+            save->save_block_edits[i].z = 0;
+            save->save_block_edits[i].type = BLOCK_AIR;
         }
     }
 
@@ -637,7 +628,7 @@ static int validate_save_data(const SaveData *save) {
         return 0;
     }
 
-    if (save->block_edit_count < 0 || save->block_edit_count > MAX_BLOCK_EDITS) {
+    if (save->save_block_edit_count < 0 || save->save_block_edit_count > MAX_BLOCK_EDITS) {
         return 0;
     }
 
@@ -650,22 +641,22 @@ static int validate_save_data(const SaveData *save) {
 }
 
 static void apply_save_data(const SaveData *save) {
-    camera_pos_x = save->camera_pos_x;
-    camera_pos_y = save->camera_pos_y;
-    camera_pos_z = save->camera_pos_z;
-    camera_yaw = save->camera_yaw & ANGLE_MASK;
+    camera_pos_x = save->save_camera_pos_x;
+    camera_pos_y = save->save_camera_pos_y;
+    camera_pos_z = save->save_camera_pos_z;
+    camera_yaw = save->save_camera_yaw & ANGLE_MASK;
     camera_pitch = clamp_int(
-        save->camera_pitch,
+        save->save_camera_pitch,
         CAMERA_PITCH_MIN,
         CAMERA_PITCH_MAX
     );
-    fly_mode_enabled = save->fly_mode_enabled ? 1 : 0;
+    fly_mode_enabled = save->save_fly_mode_enabled ? 1 : 0;
 
-    block_edit_count = save->block_edit_count;
+    block_edit_count = save->save_block_edit_count;
 
     for (int i = 0; i < MAX_BLOCK_EDITS; i++) {
         if (i < block_edit_count) {
-            block_edits[i] = save->block_edits[i];
+            block_edits[i] = save->save_block_edits[i];
 
             if (block_edits[i].y < 0) {
                 block_edits[i].y = 0;
