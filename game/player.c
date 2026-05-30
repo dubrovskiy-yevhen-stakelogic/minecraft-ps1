@@ -542,12 +542,20 @@ static void add_target_block(void) {
 static void update_input(void) {
     const uint16_t buttons = read_pad_buttons();
     const uint16_t pressed_this_frame = buttons & ~game_state.input.pad_previous_buttons;
+    const PadAnalogState analog = read_pad_analog();
 
-    const int forward_x = isin(game_state.player.camera_yaw);
-    const int forward_z = icos(game_state.player.camera_yaw);
+    int forward_x;
+    int forward_z;
+    int right_x;
+    int right_z;
 
-    const int right_x = icos(game_state.player.camera_yaw);
-    const int right_z = -isin(game_state.player.camera_yaw);
+    int analog_look_x = analog.right_x;
+    int analog_look_y = analog.right_y;
+    int analog_move_forward = -analog.left_y;
+    int analog_move_strafe = analog.left_x;
+
+    int digital_move_forward = 0;
+    int digital_move_strafe = 0;
 
     if (pressed_this_frame & PAD_START) {
         reset_block_breaking();
@@ -589,20 +597,39 @@ static void update_input(void) {
         }
     }
 
-    if (buttons & PAD_LEFT) {
-        game_state.player.camera_yaw = (game_state.player.camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
-    }
+    /*
+     * Modern control scheme:
+     * - left analog moves the player
+     * - right analog looks around
+     *
+     * Digital fallback is kept for emulators/controllers that are not in analog
+     * mode, but TRIANGLE/CROSS no longer control camera when analog is active.
+     */
+    if (analog.has_analog) {
+        game_state.player.camera_yaw = (
+            game_state.player.camera_yaw +
+            ((analog_look_x * ANALOG_CAMERA_YAW_SPEED) / ANALOG_MOVE_MAX)
+        ) & ANGLE_MASK;
 
-    if (buttons & PAD_RIGHT) {
-        game_state.player.camera_yaw = (game_state.player.camera_yaw + CAMERA_YAW_SPEED) & ANGLE_MASK;
-    }
+        game_state.player.camera_pitch -= (
+            analog_look_y * ANALOG_CAMERA_PITCH_SPEED
+        ) / ANALOG_MOVE_MAX;
+    } else {
+        if (buttons & PAD_LEFT) {
+            game_state.player.camera_yaw = (game_state.player.camera_yaw - CAMERA_YAW_SPEED) & ANGLE_MASK;
+        }
 
-    if (buttons & PAD_TRIANGLE) {
-        game_state.player.camera_pitch -= CAMERA_PITCH_SPEED;
-    }
+        if (buttons & PAD_RIGHT) {
+            game_state.player.camera_yaw = (game_state.player.camera_yaw + CAMERA_YAW_SPEED) & ANGLE_MASK;
+        }
 
-    if (buttons & PAD_CROSS) {
-        game_state.player.camera_pitch += CAMERA_PITCH_SPEED;
+        if (buttons & PAD_TRIANGLE) {
+            game_state.player.camera_pitch -= CAMERA_PITCH_SPEED;
+        }
+
+        if (buttons & PAD_CROSS) {
+            game_state.player.camera_pitch += CAMERA_PITCH_SPEED;
+        }
     }
 
     if (!game_state.player.fly_mode_enabled) {
@@ -621,26 +648,64 @@ static void update_input(void) {
         CAMERA_PITCH_MAX
     );
 
-    if (game_state.player.fly_mode_enabled) {
+    if (!analog.has_analog) {
         if (buttons & PAD_UP) {
-            game_state.player.camera_pos_x += (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
-            game_state.player.camera_pos_z += (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+            digital_move_forward += ANALOG_MOVE_MAX;
         }
 
         if (buttons & PAD_DOWN) {
-            game_state.player.camera_pos_x -= (forward_x * FLY_MOVE_SPEED) / FIXED_ONE;
-            game_state.player.camera_pos_z -= (forward_z * FLY_MOVE_SPEED) / FIXED_ONE;
+            digital_move_forward -= ANALOG_MOVE_MAX;
         }
 
         if (buttons & PAD_L1) {
-            game_state.player.camera_pos_x -= (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
-            game_state.player.camera_pos_z -= (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+            digital_move_strafe -= ANALOG_MOVE_MAX;
         }
 
         if (buttons & PAD_R1) {
-            game_state.player.camera_pos_x += (right_x * FLY_STRAFE_SPEED) / FIXED_ONE;
-            game_state.player.camera_pos_z += (right_z * FLY_STRAFE_SPEED) / FIXED_ONE;
+            digital_move_strafe += ANALOG_MOVE_MAX;
         }
+
+        analog_move_forward = digital_move_forward;
+        analog_move_strafe = digital_move_strafe;
+    } else {
+        /*
+         * Do not mix D-pad/L1/R1 movement into analog movement.
+         * Some emulator/controller profiles mirror analog axes into digital
+         * direction bits, which made left movement drift forward and sometimes
+         * fight collision/autojump.
+         */
+        analog_move_forward = clamp_int(
+            analog_move_forward,
+            -ANALOG_MOVE_MAX,
+            ANALOG_MOVE_MAX
+        );
+
+        analog_move_strafe = clamp_int(
+            analog_move_strafe,
+            -ANALOG_MOVE_MAX,
+            ANALOG_MOVE_MAX
+        );
+    }
+
+    forward_x = isin(game_state.player.camera_yaw);
+    forward_z = icos(game_state.player.camera_yaw);
+
+    right_x = icos(game_state.player.camera_yaw);
+    right_z = -isin(game_state.player.camera_yaw);
+
+    if (game_state.player.fly_mode_enabled) {
+        const int move_x = (
+            (forward_x * analog_move_forward * FLY_MOVE_SPEED) +
+            (right_x * analog_move_strafe * FLY_STRAFE_SPEED)
+        ) / (FIXED_ONE * ANALOG_MOVE_MAX);
+
+        const int move_z = (
+            (forward_z * analog_move_forward * FLY_MOVE_SPEED) +
+            (right_z * analog_move_strafe * FLY_STRAFE_SPEED)
+        ) / (FIXED_ONE * ANALOG_MOVE_MAX);
+
+        game_state.player.camera_pos_x += move_x;
+        game_state.player.camera_pos_z += move_z;
 
         if (buttons & PAD_L2) {
             game_state.player.camera_pos_y += FLY_VERTICAL_SPEED;
@@ -650,32 +715,18 @@ static void update_input(void) {
             game_state.player.camera_pos_y -= FLY_VERTICAL_SPEED;
         }
     } else {
-        if (buttons & PAD_UP) {
-            try_walk_move(
-                (forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
-                (forward_z * WALK_MOVE_SPEED) / FIXED_ONE
-            );
-        }
+        const int move_x = (
+            (forward_x * analog_move_forward * WALK_MOVE_SPEED) +
+            (right_x * analog_move_strafe * WALK_STRAFE_SPEED)
+        ) / (FIXED_ONE * ANALOG_MOVE_MAX);
 
-        if (buttons & PAD_DOWN) {
-            try_walk_move(
-                -(forward_x * WALK_MOVE_SPEED) / FIXED_ONE,
-                -(forward_z * WALK_MOVE_SPEED) / FIXED_ONE
-            );
-        }
+        const int move_z = (
+            (forward_z * analog_move_forward * WALK_MOVE_SPEED) +
+            (right_z * analog_move_strafe * WALK_STRAFE_SPEED)
+        ) / (FIXED_ONE * ANALOG_MOVE_MAX);
 
-        if (buttons & PAD_L1) {
-            try_walk_move(
-                -(right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
-                -(right_z * WALK_STRAFE_SPEED) / FIXED_ONE
-            );
-        }
-
-        if (buttons & PAD_R1) {
-            try_walk_move(
-                (right_x * WALK_STRAFE_SPEED) / FIXED_ONE,
-                (right_z * WALK_STRAFE_SPEED) / FIXED_ONE
-            );
+        if (move_x != 0 || move_z != 0) {
+            try_walk_move(move_x, move_z);
         }
 
         snap_camera_to_ground();
