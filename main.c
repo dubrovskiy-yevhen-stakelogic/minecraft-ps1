@@ -243,7 +243,9 @@ enum {
     BLOCK_SAND = 4,
     BLOCK_LOG = 5,
     BLOCK_PLANKS = 6,
-    BLOCK_WORKBENCH = 7
+    BLOCK_WORKBENCH = 7,
+
+    ITEM_WOOD_PICKAXE = 32
 };
 
 enum {
@@ -1785,6 +1787,17 @@ static int stack_is_empty(const ItemStack *stack) {
     return stack->type == BLOCK_AIR || stack->count == 0;
 }
 
+static int is_placeable_block_type(int item_type) {
+    return
+        item_type == BLOCK_DIRT ||
+        item_type == BLOCK_GRASS ||
+        item_type == BLOCK_STONE ||
+        item_type == BLOCK_SAND ||
+        item_type == BLOCK_LOG ||
+        item_type == BLOCK_PLANKS ||
+        item_type == BLOCK_WORKBENCH;
+}
+
 static int add_to_existing_stack_array(ItemStack *stacks, int count, uint8_t type, int amount) {
     int remaining = amount;
 
@@ -1947,6 +1960,11 @@ static void add_target_block(void) {
 
     if (selected_block_type == BLOCK_AIR) {
         set_system_status("EMPTY SLOT", 45);
+        return;
+    }
+
+    if (!is_placeable_block_type(selected_block_type)) {
+        set_system_status("NOT A BLOCK", 45);
         return;
     }
 
@@ -3427,6 +3445,188 @@ static int block_type_to_icon_texture(int block_type) {
     return -1;
 }
 
+
+static void draw_pickaxe_sprite_rows(
+    RenderContext *context,
+    int x,
+    int y,
+    int pixel_size,
+    const char * const *rows,
+    int row_count,
+    int z,
+    int shadow_only
+) {
+    for (int row = 0; row < row_count; row++) {
+        const char *line = rows[row];
+
+        for (int col = 0; line[col] != 0; col++) {
+            int r = 0;
+            int g = 0;
+            int b = 0;
+            const char c = line[col];
+
+            if (c == '.') {
+                continue;
+            }
+
+            if (shadow_only) {
+                r = 24;
+                g = 20;
+                b = 18;
+            } else if (c == '2') {
+                r = 94;
+                g = 58;
+                b = 30;
+            } else if (c == '3') {
+                r = 142;
+                g = 92;
+                b = 48;
+            } else if (c == '4') {
+                r = 90;
+                g = 90;
+                b = 96;
+            } else if (c == '5') {
+                r = 168;
+                g = 168;
+                b = 176;
+            } else if (c == '6') {
+                r = 214;
+                g = 214;
+                b = 220;
+            } else if (c == '1') {
+                r = 40;
+                g = 40;
+                b = 44;
+            } else {
+                continue;
+            }
+
+            draw_filled_rect(
+                context,
+                x + (col * pixel_size),
+                y + (row * pixel_size),
+                pixel_size,
+                pixel_size,
+                z,
+                r,
+                g,
+                b
+            );
+        }
+    }
+}
+
+static void draw_pickaxe_icon(
+    RenderContext *context,
+    int x,
+    int y,
+    int size,
+    int z
+) {
+    static const char * const sprite[16] = {
+        "................",
+        "....1444441.....",
+        "...145555541....",
+        "..14455555541...",
+        "...1444444441...",
+        "......14331.....",
+        ".....143331.....",
+        "....1433331.....",
+        "...14333331.....",
+        "..143333331.....",
+        ".1433333331.....",
+        "..123333331.....",
+        "...1233331......",
+        "....12331.......",
+        ".....121........",
+        "................"
+    };
+
+    int pixel_size = size / 16;
+    int draw_w;
+    int draw_h;
+    int draw_x;
+    int draw_y;
+
+    if (pixel_size < 1) {
+        pixel_size = 1;
+    }
+
+    draw_w = 16 * pixel_size;
+    draw_h = 16 * pixel_size;
+    draw_x = x + ((size - draw_w) / 2);
+    draw_y = y + ((size - draw_h) / 2);
+
+    draw_pickaxe_sprite_rows(context, draw_x + 1, draw_y + 1, pixel_size, sprite, 16, z + 1, 1);
+    draw_pickaxe_sprite_rows(context, draw_x, draw_y, pixel_size, sprite, 16, z, 0);
+}
+
+static void draw_pickaxe_held_overlay(RenderContext *context) {
+    static const char * const sprite[16] = {
+        "................",
+        "................",
+        "......1444441...",
+        ".....145555541..",
+        "....14455555541.",
+        ".....1444444441.",
+        ".........14331..",
+        "........143331..",
+        ".......1433331..",
+        "......14333331..",
+        ".....143333331..",
+        "....1433333331..",
+        ".....123333331..",
+        "......1233331...",
+        ".......12331....",
+        "........121....."
+    };
+
+    const int pixel_size = 4;
+    const int draw_x = 224;
+    const int draw_y = 144;
+
+    /*
+     * Better-looking first-person overlay:
+     * a large pixel-art sprite with a shadow and a simple hand shape behind it.
+     * No behavior changes yet — visual only.
+     */
+    draw_filled_rect(context, 246, 188, 42, 28, 0, 176, 134, 96);
+    draw_filled_rect(context, 252, 192, 34, 22, 0, 202, 158, 116);
+    draw_filled_rect(context, 258, 195, 18, 16, 0, 224, 182, 136);
+
+    draw_pickaxe_sprite_rows(context, draw_x + 3, draw_y + 3, pixel_size, sprite, 16, 1, 1);
+    draw_pickaxe_sprite_rows(context, draw_x, draw_y, pixel_size, sprite, 16, 0, 0);
+}
+
+static void draw_item_icon(
+    RenderContext *context,
+    int x,
+    int y,
+    int size,
+    uint8_t item_type,
+    int z,
+    int seed
+) {
+    const int texture_type = block_type_to_icon_texture(item_type);
+
+    if (item_type == ITEM_WOOD_PICKAXE) {
+        draw_pickaxe_icon(context, x, y, size, z);
+        return;
+    }
+
+    if (texture_type >= 0) {
+        draw_minecraft_texture_block(
+            context,
+            x,
+            y,
+            size,
+            texture_type,
+            z,
+            seed
+        );
+    }
+}
+
 static void draw_stack_count(RenderContext *context, int x, int y, int count) {
     char text_buffer[4];
     int bg_w = 10;
@@ -3473,15 +3673,15 @@ static void draw_hotbar_slot(RenderContext *context, int slot_index, int selecte
     draw_line(context, x + HOTBAR_SLOT_SIZE - 1, y, x + HOTBAR_SLOT_SIZE - 1, y + HOTBAR_SLOT_SIZE - 1, 0, 18, 18, 18);
     draw_line(context, x, y + HOTBAR_SLOT_SIZE - 1, x + HOTBAR_SLOT_SIZE - 1, y + HOTBAR_SLOT_SIZE - 1, 0, 18, 18, 18);
 
-    if (texture_type >= 0) {
+    if (!stack_is_empty(stack)) {
         draw_stack_count(context, x + 8, y + 12, stack->count);
 
-        draw_minecraft_texture_block(
+        draw_item_icon(
             context,
             x + 4,
             y + 4,
             HOTBAR_SLOT_SIZE - 8,
-            texture_type,
+            stack->type,
             0,
             200 + slot_index
         );
@@ -3915,8 +4115,6 @@ static void draw_inventory_slot(
     int disabled,
     int seed
 ) {
-    const int texture_type = block_type_to_icon_texture(count == 0 ? BLOCK_AIR : block_type);
-
     if (selected) {
         draw_filled_rect(context, x - 2, y - 2, INVENTORY_SLOT_SIZE + 4, INVENTORY_SLOT_SIZE + 4, 1, 244, 244, 244);
     }
@@ -3934,15 +4132,15 @@ static void draw_inventory_slot(
     draw_line(context, x + INVENTORY_SLOT_SIZE - 1, y, x + INVENTORY_SLOT_SIZE - 1, y + INVENTORY_SLOT_SIZE - 1, 0, 22, 22, 22);
     draw_line(context, x, y + INVENTORY_SLOT_SIZE - 1, x + INVENTORY_SLOT_SIZE - 1, y + INVENTORY_SLOT_SIZE - 1, 0, 22, 22, 22);
 
-    if (texture_type >= 0) {
+    if (count > 0) {
         draw_stack_count(context, x + 7, y + 10, count);
 
-        draw_minecraft_texture_block(
+        draw_item_icon(
             context,
             x + 3,
             y + 3,
             INVENTORY_SLOT_SIZE - 6,
-            texture_type,
+            block_type,
             0,
             seed
         );
@@ -4593,6 +4791,17 @@ static void draw_workbench_screen(RenderContext *context) {
     }
 }
 
+static void draw_held_item_in_hand(RenderContext *context) {
+    const int selected_type = get_selected_hotbar_block_type();
+
+    if (selected_type == ITEM_WOOD_PICKAXE) {
+        draw_pickaxe_held_overlay(context);
+    } else if (is_placeable_block_type(selected_type)) {
+        draw_panel(context, 238, 166, 34, 34, 2, 58, 44, 34, 172, 132, 92);
+        draw_item_icon(context, 246, 174, 18, (uint8_t)selected_type, 0, 1300 + selected_type);
+    }
+}
+
 static void draw_game_hud(RenderContext *context) {
     draw_hearts(context);
     draw_hotbar(context);
@@ -4623,6 +4832,9 @@ static void reset_inventory_items(void) {
 
     hotbar_slot_blocks[2].type = BLOCK_SAND;
     hotbar_slot_blocks[2].count = STACK_MAX_COUNT;
+
+    hotbar_slot_blocks[3].type = ITEM_WOOD_PICKAXE;
+    hotbar_slot_blocks[3].count = 1;
 
     for (int i = 0; i < INVENTORY_STORAGE_SLOT_COUNT; i++) {
         inventory_storage_blocks[i].type = BLOCK_AIR;
@@ -5063,6 +5275,7 @@ int main(int argc, const char **argv) {
         draw_dropped_items(&ctx);
         draw_breaking_overlay(&ctx);
         draw_crosshair(&ctx);
+        draw_held_item_in_hand(&ctx);
         draw_game_hud(&ctx);
 
         flip_buffers(&ctx);
